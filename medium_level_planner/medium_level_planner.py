@@ -11,7 +11,12 @@ from rclpy.task import Future as RclpyFuture
 from custom_interfaces.action import Prompt
 
 # Services
-from custom_interfaces.srv import GetCurrentPose
+from custom_interfaces.srv import GetCurrentPose, GetJointAngles
+
+# Actions
+from custom_interfaces.action import MoveitPose
+from control_msgs.action import GripperCommand
+from geometry_msgs.msg import Pose
 
 # LangChain
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -38,18 +43,16 @@ class Ros2LLMAgentNode(Node):
         if not api_key:
             self.get_logger().warn("No LLM API key found in environment variables GEMINI_API_KEY.")
 
-        # choose model name as appropriate to your provider
         self.llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=api_key, temperature=0.0)
 
-        # --- Hard-coded ROS2 clients (replace interfaces & topic names with your own) ---
-        # Example placeholders (uncomment & replace with your actual message types)
         # Service clients
-        # /get_current_pose
         self.pose_client = self.create_client(GetCurrentPose, "/get_current_pose")
-        # self.pose_client = self.create_client(GetPose, "/get_current_pose")
-        # self.joints_client = self.create_client(GetJoints, "/get_joint_angles")
-        # self.move_action_client = ActionClient(self, MoveToPose, "/move_to_pose")
-        # self.home_action_client = ActionClient(self, MoveToHome, "/move_to_home")
+        self.joints_client = self.create_client(GetJointAngles, "/get_joint_angles")
+        
+        # Action clients
+        self.move_action_client = ActionClient(self, MoveitPose, "/plan_cartesian_execute_pose")
+        self.gripper_action_client = ActionClient(self, GripperCommand, "/gripper_wrapper")
+        
 
         # Shared state for tracking which tools were called during one prompt execution
         self._tools_called: List[str] = []
@@ -125,85 +128,88 @@ class Ros2LLMAgentNode(Node):
                 self._tools_called.append(tool_name)
 
             try:
-                # Uncomment/adapt for real client:
-                # if not self.joints_client.wait_for_service(timeout_sec=5.0):
-                #     return "Service /get_joint_angles unavailable"
-                # req = GetJoints.Request()
-                # future = self.joints_client.call_async(req)
-                # rclpy.spin_until_future_complete(self, future)
-                # resp = future.result()
-                # return f"joints: {resp.joints}"
-                time.sleep(0.2)
-                return "joints: [0.0, 0.1, -0.2, 0.0]"
+                if not self.joints_client.wait_for_service(timeout_sec=5.0):
+                    return "Service /get_joint_angles unavailable"
+                req = GetJointAngles.Request()
+                future = self.joints_client.call_async(req)
+                rclpy.spin_until_future_complete(self, future)
+                resp = future.result()
+                if resp.success:
+                    return f"joints: {str(resp.joint_positions)}"
+                else:
+                    return "Failed to get joint angles"
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
 
-        # tools.append(get_joint_angles)
+        tools.append(get_joint_angles)
 
         # ---- Example Action tool: move_to_pose ----
         @tool
-        def move_to_pose(target_pose_str: str) -> str:
+        def move_linear_to_pose(pos_x: float, pos_y: float, pos_z: float, rot_x: float, rot_y: float, rot_z: float) -> str:
             """
-            Move robot to a target pose (encoded as text). This wrapper calls an action client.
-            Replace with your actual MoveToPose action usage.
+            Move robot to a target pose using Roll Pitch Yaw orientation
             """
-            tool_name = "move_to_pose"
+            tool_name = "move_linear_to_pose"
             with self._tools_called_lock:
                 self._tools_called.append(tool_name)
 
             try:
                 # Example synchronous flow using ActionClient:
-                # goal = MoveToPose.Goal()
-                # fill goal fields from target_pose_str...
-                # self.move_action_client.wait_for_server(timeout_sec=5.0)
-                # send_future = self.move_action_client.send_goal_async(goal)
-                # rclpy.spin_until_future_complete(self, send_future)
-                # goal_handle = send_future.result()
-                # if not goal_handle.accepted:
-                #     return "Move action rejected"
-                # result_future = goal_handle.get_result_async()
-                # rclpy.spin_until_future_complete(self, result_future)
-                # result = result_future.result().result
-                # return f"move_to_pose result: success={result.success}"
-                time.sleep(0.5)
-                return f"move_to_pose started to {target_pose_str} (simulated)"
+                goal = MoveitPose.Goal()
+                pose = Pose()
+                pose.position.x = pos_x
+                pose.position.y = pos_y
+                pose.position.z = pos_z
+                pose.orientation.x = rot_x
+                pose.orientation.y = rot_y
+                pose.orientation.z = rot_z
+                goal.pose = pose
+                if not self.move_action_client.wait_for_server(timeout_sec=5.0):
+                    return "Move action server unavailable"
+                send_future = self.move_action_client.send_goal_async(goal)
+                rclpy.spin_until_future_complete(self, send_future)
+                goal_handle = send_future.result()
+                if not goal_handle.accepted:
+                    return "Move action rejected"
+                result_future = goal_handle.get_result_async()
+                rclpy.spin_until_future_complete(self, result_future)
+                result = result_future.result().result
+                return f"move_to_pose result: success={result.success}"
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
 
-        # tools.append(move_to_pose)
+        tools.append(move_linear_to_pose)
 
-        # ---- Example Action tool: move_to_home ----
+
         @tool
-        def move_to_home() -> str:
+        def set_gripper_position(position: float, max_effort: float) -> str:
             """
-            Command the robot to move to its home position.
-            Replace with your MoveToHome action client usage.
+            Set the gripper to a specific position with given max effort. Where a position of 0.0 is fully open and 0.8 is fully close.
             """
-            tool_name = "move_to_home"
+            tool_name = "set_gripper_position"
             with self._tools_called_lock:
                 self._tools_called.append(tool_name)
 
             try:
-                # Uncomment/adapt for real client action:
-                # goal = MoveToHome.Goal()
-                # self.home_action_client.wait_for_server(timeout_sec=5.0)
-                # send_future = self.home_action_client.send_goal_async(goal)
-                # rclpy.spin_until_future_complete(self, send_future)
-                # goal_handle = send_future.result()
-                # if not goal_handle.accepted:
-                #     return "Home action rejected"
-                # result_future = goal_handle.get_result_async()
-                # rclpy.spin_until_future_complete(self, result_future)
-                # result = result_future.result().result
-                # return f"move_to_home result: success={result.success}"
-                time.sleep(0.3)
-                return "move_to_home completed (simulated)"
+                goal = GripperCommand.Goal()
+                goal.command.position = position
+                goal.command.max_effort = max_effort
+                if not self.gripper_action_client.wait_for_server(timeout_sec=5.0):
+                    return "Gripper action server unavailable"
+                send_future = self.gripper_action_client.send_goal_async(goal)
+                rclpy.spin_until_future_complete(self, send_future)
+                goal_handle = send_future.result()
+                if not goal_handle.accepted:
+                    return "Gripper action rejected"
+                result_future = goal_handle.get_result_async()
+                rclpy.spin_until_future_complete(self, result_future)
+                result = result_future.result().result
+                return f"set_gripper_position result: success={result.success}"
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
 
-        # tools.append(move_to_home)
+        tools.append(set_gripper_position)
 
-        # Return list of LangChain tools
         return tools
 
     # -----------------------
@@ -216,7 +222,7 @@ class Ros2LLMAgentNode(Node):
 
         system_message = (
             "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
-            "query sensors or command the robot: get_current_pose\n"
+            "query sensors or command the robot: get_current_pose, get_joint_angles, move_linear_to_pose, set_gripper_position\n"
             "When you choose to use a tool, call it with appropriate arguments (if any). "
             "Return a final, concise, actionable response after using tools."
         )
