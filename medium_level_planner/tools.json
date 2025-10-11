@@ -1,0 +1,22 @@
+{
+  "tools": [
+    {
+      "name": "get_current_pose",
+      "description": "Returns the current end-effector pose relative to base_link.",
+      "type": "service",
+      "interface": "custom_interfaces/srv/GetCurrentPose"
+    },
+    {
+      "name": "get_joint_angles",
+      "description": "Fetches all joint angles from the robot.",
+      "type": "service",
+      "interface": "custom_interfaces/srv/GetJointAngles"
+    },
+    {
+      "name": "plan_cartesian_execute_pose",
+      "description": "Moves the robot to the specified target pose.",
+      "type": "action",
+      "interface": "custom_interfaces/action/MoveitPose"
+    }
+  ]
+}
