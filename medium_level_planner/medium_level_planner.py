@@ -27,7 +27,7 @@ from langchain.agents import AgentExecutor, create_tool_calling_agent
 # dotenv
 from dotenv import load_dotenv
 
-ENV_PATH = '/home/final-project/ur_yt_ws/src/medium_level_planner/.env'
+ENV_PATH = '/home/group11/final_project_ws/src/medium_level_planner/.env'
 load_dotenv(dotenv_path=ENV_PATH)
 
 # ---------------------------
