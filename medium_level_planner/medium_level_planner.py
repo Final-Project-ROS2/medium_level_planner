@@ -9,9 +9,8 @@ from rclpy.action import ActionServer, ActionClient, CancelResponse, GoalRespons
 from rclpy.task import Future as RclpyFuture
 
 from custom_interfaces.action import Prompt
-
-# Services
-from custom_interfaces.srv import GetCurrentPose, GetJointAngles
+from custom_interfaces.action import GetCurrentPose
+from custom_interfaces.action import GetJointAngles
 
 # Actions
 from custom_interfaces.action import MoveitPose
@@ -45,13 +44,12 @@ class Ros2LLMAgentNode(Node):
 
         self.llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=api_key, temperature=0.0)
 
-        # Service clients
-        self.pose_client = self.create_client(GetCurrentPose, "/get_current_pose")
-        self.joints_client = self.create_client(GetJointAngles, "/get_joint_angles")
-        
+
         # Action clients
         self.move_action_client = ActionClient(self, MoveitPose, "/plan_cartesian_execute_pose")
         self.gripper_action_client = ActionClient(self, GripperCommand, "/gripper_wrapper")
+        self.pose_action_client = ActionClient(self, GetCurrentPose, "/get_current_pose")
+        self.joint_action_client = ActionClient(self, GetJointAngles, "/get_joint_angles")
         
 
         # Shared state for tracking which tools were called during one prompt execution
@@ -87,28 +85,31 @@ class Ros2LLMAgentNode(Node):
 
         tools: List[BaseTool] = []
 
-        # Service tools
+        # Action tools
         # /get_current_pose
         @tool
         def get_current_pose() -> str:
             """
-            Returns the current robot's end-effector relative to base_link
+            Returns the current robot's end-effector pose relative to base_link using an action call.
             """
             tool_name = "get_current_pose"
-
             with self._tools_called_lock:
                 self._tools_called.append(tool_name)
 
             try:
-                # Uncomment and adapt these lines when you have real service type
-                if not self.pose_client.wait_for_service(timeout_sec=5.0):
-                    return "Service /get_current_pose unavailable"
-                req = GetCurrentPose.Request()
-                future = self.pose_client.call_async(req)
-                rclpy.spin_until_future_complete(self, future)
-                resp = future.result()
-                if resp.success:
-                    return f"pose: {resp.pose}"
+                if not self.pose_action_client.wait_for_server(timeout_sec=5.0):
+                    return "Action server /get_current_pose unavailable"
+                goal = GetCurrentPose.Goal()  # No goal fields required here
+                send_future = self.pose_action_client.send_goal_async(goal)
+                rclpy.spin_until_future_complete(self, send_future)
+                goal_handle = send_future.result()
+                if not goal_handle.accepted:
+                    return "Action goal rejected for /get_current_pose"
+                result_future = goal_handle.get_result_async()
+                rclpy.spin_until_future_complete(self, result_future)
+                result = result_future.result().result
+                if result.success:
+                    return f"pose: {result.pose}"
                 else:
                     return "Failed to get current pose"
             except Exception as e:
@@ -116,32 +117,35 @@ class Ros2LLMAgentNode(Node):
 
         tools.append(get_current_pose)
 
-        # ---- Example Service tool: get_joint_angles ----
+        # /get_joint_angles
         @tool
         def get_joint_angles() -> str:
             """
-            Returns a textual representation of all joint angles.
-            Replace with your actual GetJoints service usage.
+            Returns a textual representation of all joint angles using an action call.
             """
             tool_name = "get_joint_angles"
             with self._tools_called_lock:
                 self._tools_called.append(tool_name)
 
             try:
-                if not self.joints_client.wait_for_service(timeout_sec=5.0):
-                    return "Service /get_joint_angles unavailable"
-                req = GetJointAngles.Request()
-                future = self.joints_client.call_async(req)
-                rclpy.spin_until_future_complete(self, future)
-                resp = future.result()
-                if resp.success:
-                    return f"joints: {str(resp.joint_positions)}"
+                if not self.joints_action_client.wait_for_server(timeout_sec=5.0):
+                    return "Action server /get_joint_angles unavailable"
+                goal = GetJointAngles.Goal()
+                send_future = self.joints_action_client.send_goal_async(goal)
+                rclpy.spin_until_future_complete(self, send_future)
+                goal_handle = send_future.result()
+                if not goal_handle.accepted:
+                    return "Action goal rejected for /get_joint_angles"
+                result_future = goal_handle.get_result_async()
+                rclpy.spin_until_future_complete(self, result_future)
+                result = result_future.result().result
+                if result.success:
+                    return f"joints: {result.joint_positions}"
                 else:
                     return "Failed to get joint angles"
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
 
-        tools.append(get_joint_angles)
 
         # ---- Example Action tool: move_to_pose ----
         @tool
