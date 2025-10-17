@@ -11,6 +11,7 @@ from rclpy.task import Future as RclpyFuture
 from custom_interfaces.action import Prompt
 from custom_interfaces.action import GetCurrentPose
 from custom_interfaces.action import GetJointAngles
+from custom_interfaces.action import MoveitRelative
 
 # Actions
 from custom_interfaces.action import MoveitPose
@@ -50,7 +51,7 @@ class Ros2LLMAgentNode(Node):
         self.gripper_action_client = ActionClient(self, GripperCommand, "/gripper_wrapper")
         self.pose_action_client = ActionClient(self, GetCurrentPose, "/get_current_pose")
         self.joint_action_client = ActionClient(self, GetJointAngles, "/get_joint_angles")
-        
+        self.relative_action_client = ActionClient(self, MoveitRelative, "/plan_cartesian_relative")
 
         # Shared state for tracking which tools were called during one prompt execution
         self._tools_called: List[str] = []
@@ -214,7 +215,65 @@ class Ros2LLMAgentNode(Node):
 
         tools.append(set_gripper_position)
 
+
+        @tool
+        def move_relative(dx: float, dy: float, dz: float,
+                        roll: float, pitch: float, yaw: float) -> str:
+            """
+            Moves the robot end-effector relative to its current pose using the MoveItRelative action.
+
+            Args:
+                dx (float): Relative movement in x (meters)
+                dy (float): Relative movement in y (meters)
+                dz (float): Relative movement in z (meters)
+                roll (float): Relative rotation in roll (radians)
+                pitch (float): Relative rotation in pitch (radians)
+                yaw (float): Relative rotation in yaw (radians)
+
+            Returns:
+                str: Result message indicating success or failure.
+            """
+            tool_name = "move_relative"
+            with self._tools_called_lock:
+                self._tools_called.append(tool_name)
+
+            try:
+                if not self.relative_action_client.wait_for_server(timeout_sec=5.0):
+                    return "Action server /plan_cartesian_relative unavailable."
+
+                goal_msg = MoveitRelative.Goal()
+                goal_msg.distance_x = dx
+                goal_msg.distance_y = dy
+                goal_msg.distance_z = dz
+                goal_msg.roll = roll
+                goal_msg.pitch = pitch
+                goal_msg.yaw = yaw
+
+                send_goal_future = self.relative_action_client.send_goal_async(goal_msg)
+                rclpy.spin_until_future_complete(self, send_goal_future)
+                goal_handle = send_goal_future.result()
+
+                if not goal_handle.accepted:
+                    return "Relative motion goal rejected by action server."
+
+                result_future = goal_handle.get_result_async()
+                rclpy.spin_until_future_complete(self, result_future)
+                result = result_future.result().result
+
+                if result.success:
+                    return (f"✅ Relative motion executed successfully:\n"
+                            f"Δx={dx:.3f}, Δy={dy:.3f}, Δz={dz:.3f}, "
+                            f"roll={roll:.3f}, pitch={pitch:.3f}, yaw={yaw:.3f}")
+                else:
+                    return "❌ Cartesian path planning or execution failed."
+
+            except Exception as e:
+                return f"ERROR in {tool_name}: {e}"
+        
+        tools.append(move_relative)
+            
         return tools
+
 
     # -----------------------
     # Create agent executor
@@ -226,7 +285,7 @@ class Ros2LLMAgentNode(Node):
 
         system_message = (
             "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
-            "query sensors or command the robot: get_current_pose, get_joint_angles, move_linear_to_pose, set_gripper_position\n"
+            "query sensors or command the robot: get_current_pose, get_joint_angles, move_linear_to_pose, set_gripper_position, move_relative\n"
             "When you choose to use a tool, call it with appropriate arguments (if any). "
             "Return a final, concise, actionable response after using tools."
         )
