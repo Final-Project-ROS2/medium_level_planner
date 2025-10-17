@@ -8,12 +8,14 @@ from rclpy.node import Node
 from rclpy.action import ActionServer, ActionClient, CancelResponse, GoalResponse
 from rclpy.task import Future as RclpyFuture
 
+# Services
+from std_srvs.srv import SetBool
+
+# Actions
 from custom_interfaces.action import Prompt
 from custom_interfaces.action import GetCurrentPose
 from custom_interfaces.action import GetJointAngles
 from custom_interfaces.action import MoveitRelative
-
-# Actions
 from custom_interfaces.action import MoveitPose
 from control_msgs.action import GripperCommand
 from geometry_msgs.msg import Pose
@@ -38,6 +40,13 @@ class Ros2LLMAgentNode(Node):
         super().__init__("ros2_llm_agent")
         self.get_logger().info("Initializing Ros2 LLM Agent Node...")
 
+        self.declare_parameter("real_hardware", False)
+        self.real_hardware: bool = self.get_parameter("real_hardware").get_parameter_value().bool_value
+        if self.real_hardware:
+            self.get_logger().info("Running in REAL HARDWARE mode.")
+        else:
+            self.get_logger().info("Running in SIMULATION mode.")
+
         # --- LangChain / LLM setup ---
         api_key = os.getenv("GEMINI_API_KEY") 
         if not api_key:
@@ -48,10 +57,14 @@ class Ros2LLMAgentNode(Node):
 
         # Action clients
         self.move_action_client = ActionClient(self, MoveitPose, "/plan_cartesian_execute_pose")
-        self.gripper_action_client = ActionClient(self, GripperCommand, "/gripper_wrapper")
         self.pose_action_client = ActionClient(self, GetCurrentPose, "/get_current_pose")
         self.joint_action_client = ActionClient(self, GetJointAngles, "/get_joint_angles")
         self.relative_action_client = ActionClient(self, MoveitRelative, "/plan_cartesian_relative")
+
+        if self.real_hardware:
+            self.gripper_client = self.create_client(SetBool, "/control_gripper")
+        else:
+            self.gripper_client = ActionClient(self, GripperCommand, "/gripper_wrapper")
 
         # Shared state for tracking which tools were called during one prompt execution
         self._tools_called: List[str] = []
@@ -199,9 +212,9 @@ class Ros2LLMAgentNode(Node):
                 goal = GripperCommand.Goal()
                 goal.command.position = position
                 goal.command.max_effort = max_effort
-                if not self.gripper_action_client.wait_for_server(timeout_sec=5.0):
+                if not self.gripper_client.wait_for_server(timeout_sec=5.0):
                     return "Gripper action server unavailable"
-                send_future = self.gripper_action_client.send_goal_async(goal)
+                send_future = self.gripper_client.send_goal_async(goal)
                 rclpy.spin_until_future_complete(self, send_future)
                 goal_handle = send_future.result()
                 if not goal_handle.accepted:
@@ -212,8 +225,38 @@ class Ros2LLMAgentNode(Node):
                 return f"set_gripper_position result: success={result.success}"
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
+        
+        @tool
+        def close_gripper(close: bool) -> str:
+            """
+            Close or open the gripper using a service call.
+            Args:
+                close (bool): True to close the gripper, False to open.
+            """
+            tool_name = "close_gripper"
+            with self._tools_called_lock:
+                self._tools_called.append(tool_name)
 
-        tools.append(set_gripper_position)
+            try:
+                if not self.gripper_client.wait_for_service(timeout_sec=5.0):
+                    return "Gripper service /control_gripper unavailable"
+                request = SetBool.Request()
+                request.data = close
+                future = self.gripper_client.call_async(request)
+                rclpy.spin_until_future_complete(self, future)
+                response = future.result()
+                if response.success:
+                    action = "closed" if close else "opened"
+                    return f"Gripper successfully {action}."
+                else:
+                    return f"Failed to {'close' if close else 'open'} gripper: {response.message}"
+            except Exception as e:
+                return f"ERROR in {tool_name}: {e}"
+        
+        if self.real_hardware:
+            tools.append(close_gripper)
+        else:
+            tools.append(set_gripper_position)
 
 
         @tool
@@ -283,12 +326,20 @@ class Ros2LLMAgentNode(Node):
         Create a LangChain tool-calling agent. The agent will call the @tool functions above as needed.
         """
 
-        system_message = (
-            "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
-            "query sensors or command the robot: get_current_pose, get_joint_angles, move_linear_to_pose, set_gripper_position, move_relative\n"
-            "When you choose to use a tool, call it with appropriate arguments (if any). "
-            "Return a final, concise, actionable response after using tools."
-        )
+        if self.real_hardware:
+            system_message = (
+                "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
+                "query sensors or command the robot: get_current_pose, get_joint_angles, move_linear_to_pose, close_gripper, move_relative\n"
+                "When you choose to use a tool, call it with appropriate arguments (if any). "
+                "Return a final, concise, actionable response after using tools."
+            )
+        else:
+            system_message = (
+                "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
+                "query sensors or command the robot: get_current_pose, get_joint_angles, move_linear_to_pose, set_gripper_position, move_relative\n"
+                "When you choose to use a tool, call it with appropriate arguments (if any). "
+                "Return a final, concise, actionable response after using tools."
+            )
 
         prompt = ChatPromptTemplate.from_messages(
             [
