@@ -80,7 +80,7 @@ class Ros2LLMAgentNode(Node):
         self._action_server = ActionServer(
             self,
             Prompt,
-            "prompt",
+            "/medium_level",
             execute_callback=self.execute_callback,
             goal_callback=self.goal_callback,
             cancel_callback=self.cancel_callback,
