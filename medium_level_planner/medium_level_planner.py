@@ -222,7 +222,7 @@ class Ros2LLMAgentNode(Node):
                 result_future = goal_handle.get_result_async()
                 rclpy.spin_until_future_complete(self, result_future)
                 result = result_future.result().result
-                return f"set_gripper_position result: success={result.success}"
+                return f"set_gripper_position result: success={result.reached_goal}"
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
         
