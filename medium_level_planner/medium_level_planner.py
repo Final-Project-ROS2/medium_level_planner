@@ -54,7 +54,6 @@ class Ros2LLMAgentNode(Node):
 
         self.llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=api_key, temperature=0.0)
 
-
         # Action clients
         self.move_action_client = ActionClient(self, MoveitPose, "/plan_cartesian_execute_pose")
         self.pose_action_client = ActionClient(self, GetCurrentPose, "/get_current_pose")
@@ -225,7 +224,7 @@ class Ros2LLMAgentNode(Node):
                 return f"set_gripper_position result: success={result.reached_goal}"
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
-        
+
         @tool
         def close_gripper(close: bool) -> str:
             """
@@ -337,6 +336,9 @@ class Ros2LLMAgentNode(Node):
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
                 "query sensors or command the robot: get_current_pose, get_joint_angles, move_linear_to_pose, set_gripper_position, move_relative\n"
+                "If you are **EXPLICITLY** instructed to **GRAB** an object, simple set the gripper position to 0.2\n"
+                "If you are **EXPLICITLY** instructed to **RELEASE** an object, simple set the gripper position to 0.0. Always set max_effort to 0.01\n"
+                "If you are instructed to open or close the gripper without specific positions, assume fully open (0.0) or fully close (0.8) respectively.\n"
                 "When you choose to use a tool, call it with appropriate arguments (if any). "
                 "Return a final, concise, actionable response after using tools."
             )
