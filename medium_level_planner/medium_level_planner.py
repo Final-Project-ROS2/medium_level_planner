@@ -348,6 +348,7 @@ class Ros2LLMAgentNode(Node):
                 "- The direction up is along positive Z axis, down is along negative Z axis.\n"
                 "- The direction forward is along positive X axis, backward is along negative X axis.\n"
                 "- The direction left is along positive Y axis, right is along negative Y axis.\n"
+                "- To orient the gripper to face downwards, set the orientation quaternion to (-0.69, 0.72, 0.00, 0.00).\n"
                 "- The human operator you are assisting is to your right side (negative Y direction).\n"
             )
 
