@@ -341,6 +341,13 @@ class Ros2LLMAgentNode(Node):
                 "If you are instructed to open or close the gripper without specific positions, assume fully open (0.0) or fully close (0.8) respectively.\n"
                 "When you choose to use a tool, call it with appropriate arguments (if any). "
                 "Return a final, concise, actionable response after using tools."
+                "Here are some information about the environment:\n"
+                "- Your gripper is currently at fully close position (0.8).\n"
+                "- You can get your current gripper cartesian position by using the get_current_pose tool.\n"
+                "- The direction up is along positive Z axis, down is along negative Z axis.\n"
+                "- The direction forward is along positive X axis, backward is along negative X axis.\n"
+                "- The direction left is along positive Y axis, right is along negative Y axis.\n"
+                "- The human operator you are assisting is to your right side (negative Y direction).\n"
             )
 
         prompt = ChatPromptTemplate.from_messages(
