@@ -16,7 +16,7 @@ from custom_interfaces.action import Prompt
 from custom_interfaces.action import GetCurrentPose
 from custom_interfaces.action import GetJointAngles
 from custom_interfaces.action import MoveitRelative
-from custom_interfaces.action import MoveitPose
+from custom_interfaces.action import PlanComplexCartesianSteps
 from control_msgs.action import GripperCommand
 from geometry_msgs.msg import Pose
 
@@ -55,7 +55,7 @@ class Ros2LLMAgentNode(Node):
         self.llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=api_key, temperature=0.0)
 
         # Action clients
-        self.move_action_client = ActionClient(self, MoveitPose, "/plan_cartesian_execute_pose")
+        self.move_action_client = ActionClient(self, PlanComplexCartesianSteps, "/plan_complex_cartesian_steps")
         self.pose_action_client = ActionClient(self, GetCurrentPose, "/get_current_pose")
         self.joint_action_client = ActionClient(self, GetJointAngles, "/get_joint_angles")
         self.relative_action_client = ActionClient(self, MoveitRelative, "/plan_cartesian_relative")
@@ -162,7 +162,7 @@ class Ros2LLMAgentNode(Node):
 
         # ---- Example Action tool: move_to_pose ----
         @tool
-        def move_linear_to_pose(pos_x: float, pos_y: float, pos_z: float, rot_x: float, rot_y: float, rot_z: float) -> str:
+        def move_linear_to_pose(pos_x: float, pos_y: float, pos_z: float, rot_x: float, rot_y: float, rot_z: float, rot_w: float) -> str:
             """
             Move robot to a target pose using Roll Pitch Yaw orientation
             """
@@ -172,7 +172,7 @@ class Ros2LLMAgentNode(Node):
 
             try:
                 # Example synchronous flow using ActionClient:
-                goal = MoveitPose.Goal()
+                goal = PlanComplexCartesianSteps.Goal()
                 pose = Pose()
                 pose.position.x = pos_x
                 pose.position.y = pos_y
@@ -180,7 +180,8 @@ class Ros2LLMAgentNode(Node):
                 pose.orientation.x = rot_x
                 pose.orientation.y = rot_y
                 pose.orientation.z = rot_z
-                goal.pose = pose
+                pose.orientation.w = rot_w
+                goal.target_pose = pose
                 if not self.move_action_client.wait_for_server(timeout_sec=5.0):
                     return "Move action server unavailable"
                 send_future = self.move_action_client.send_goal_async(goal)
