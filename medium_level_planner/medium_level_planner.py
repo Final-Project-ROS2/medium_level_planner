@@ -261,7 +261,7 @@ class Ros2LLMAgentNode(Node):
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
 
-        tools.append(set_gripper_position)
+        # tools.append(set_gripper_position)
 
         @tool
         def close_gripper(close: bool) -> str:
