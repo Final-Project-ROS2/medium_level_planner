@@ -46,6 +46,7 @@ from custom_interfaces.srv import (
     DetectGrasps,
     DetectGraspBBox,
     UnderstandScene,
+    PixelToReal,
 )
 
 # LangChain / LLM - keep the same imports you used
@@ -99,6 +100,7 @@ class Ros2LLMAgentNode(Node):
         self.vision_detect_grasp_client = self.create_client(DetectGrasps, "/vision/detect_grasp")
         self.vision_detect_grasp_bb_client = self.create_client(DetectGraspBBox, "/vision/detect_grasp_bb")
         self.vision_understand_scene_client = self.create_client(UnderstandScene, "/vision/understand_scene")
+        self.pixel_to_real_client = self.create_client(PixelToReal, "/pixel_to_real")
 
         # Shared state for tracking which tools were called during one prompt execution
         self._tools_called: List[str] = []
@@ -547,6 +549,37 @@ class Ros2LLMAgentNode(Node):
 
         tools.append(understand_scene)
 
+        @tool
+        def pixel_to_real(u: int, v: int) -> str:
+            """
+            Call /pixel_to_real to compute the real world coordinate for the specified bounding box.
+            Returns the real world coordinates as a formatted string.
+            """
+            tool_name = "pixel_to_real"
+            with self._tools_called_lock:
+                self._tools_called.append(tool_name)
+            try:
+                if not self.pixel_to_real_client.wait_for_service(timeout_sec=5.0):
+                    return "Service /pixel_to_real unavailable"
+                req = PixelToReal.Request()
+                req.u = int(u)
+                req.v = int(v)
+                future = self.pixel_to_real_client.call_async(req)
+                rclpy.spin_until_future_complete(self, future)
+                resp = future.result()
+                if resp is None:
+                    return "No response from /pixel_to_real"
+                if not resp.success:
+                    return f"pixel_to_real failed: {resp.error_message or 'unknown'}"
+                x = resp.x 
+                y = resp.y
+                z = resp.z
+                return f"real_world_coords: x={x:.3f}, y={y:.3f}, z={z:.3f}"
+            except Exception as e:
+                return f"ERROR in pixel_to_real: {e}"
+
+        tools.append(pixel_to_real)
+
         return tools
 
     # -----------------------
@@ -570,7 +603,7 @@ class Ros2LLMAgentNode(Node):
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
                 "query sensors, perceive the environment, or command the robot: get_current_pose, get_joint_angles, "
                 "move_linear_to_pose, set_gripper_position, move_relative, detect_objects, classify_all, classify_bb, "
-                "detect_grasp, detect_grasp_bb, understand_scene.\n"
+                "detect_grasp, detect_grasp_bb, understand_scene, pixel_to_real.\n"
                 "If you are **EXPLICITLY** instructed to **GRAB** an object, set the gripper position to 0.2. "
                 "If you are **EXPLICITLY** instructed to **RELEASE** an object, set the gripper position to 0.0. Always set max_effort to 0.01.\n"
                 "When you choose to use a tool, call it with appropriate arguments (if any). "
