@@ -577,6 +577,12 @@ class Ros2LLMAgentNode(Node):
                 "Return a final, concise, actionable response after using tools.\n"
                 "Here is environment guidance:\n"
                 "- Your gripper is currently at fully close position (0.8).\n"
+                "- You can get your current gripper cartesian position by using the get_current_pose tool.\n"
+                "- The direction up is along positive Z axis, down is along negative Z axis.\n"
+                "- The direction forward is along positive X axis, backward is along negative X axis.\n"
+                "- The direction left is along positive Y axis, right is along negative Y axis.\n"
+                "- To orient the gripper to face downwards, set the orientation quaternion to (-0.69, 0.72, 0.00, 0.00).\n"
+                "- The human operator you are assisting is to your right side (negative Y direction).\n"
                 "- Use vision tools (detect_objects/classify_bb/detect_grasp_bb) to perceive which object to manipulate.\n"
                 "- For bbox-based tools, provide integer pixel coordinates [x1,y1,x2,y2].\n"
             )
