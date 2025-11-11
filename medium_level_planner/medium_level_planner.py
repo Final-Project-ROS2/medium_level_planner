@@ -582,6 +582,8 @@ class Ros2LLMAgentNode(Node):
                 "- The direction forward is along positive X axis, backward is along negative X axis.\n"
                 "- The direction left is along positive Y axis, right is along negative Y axis.\n"
                 "- To orient the gripper to face downwards, set the orientation quaternion to (-0.69, 0.72, 0.00, 0.00).\n"
+                "- The home position pose is at x=0.12, y=0.11, z=1.47 with orientation quarternion (0.63, -0.62, 0.32, -0.33).\n"
+                "- The ready position pose is at x=0.48, y=0.11, z=1.23 with orientation quarternion (-0.71, 0.71, 0.00, 0.00).\n"
                 "- The human operator you are assisting is to your right side (negative Y direction).\n"
                 "- Use vision tools (detect_objects/classify_bb/detect_grasp_bb) to perceive which object to manipulate.\n"
                 "- For bbox-based tools, provide integer pixel coordinates [x1,y1,x2,y2].\n"
