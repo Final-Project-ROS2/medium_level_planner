@@ -48,6 +48,8 @@ from custom_interfaces.srv import (
     UnderstandScene,
 )
 
+from custom_interfaces.srv import GetSetBool
+
 # LangChain / LLM - keep the same imports you used
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -100,6 +102,11 @@ class Ros2LLMAgentNode(Node):
         self.vision_detect_grasp_bb_client = self.create_client(DetectGraspBBox, "/vision/detect_grasp_bb")
         self.vision_understand_scene_client = self.create_client(UnderstandScene, "/vision/understand_scene")
 
+        # PDDL state service clients
+        self.is_home_client = self.create_client(GetSetBool, "/is_home")
+        self.is_ready_client = self.create_client(GetSetBool, "/is_ready")
+        self.gripper_is_open_client = self.create_client(GetSetBool, "/gripper_is_open")
+
         # Shared state for tracking which tools were called during one prompt execution
         self._tools_called: List[str] = []
         self._tools_called_lock = threading.Lock()
@@ -121,6 +128,43 @@ class Ros2LLMAgentNode(Node):
         )
 
         self.get_logger().info("Ros2 LLM Agent Node ready (Prompt action server running).")
+
+    def set_robot_state(self, state_name: str, value: bool) -> bool:
+        """
+        Set robot state via PDDL state services.
+        state_name: 'is_home', 'is_ready', 'gripper_is_open'
+        value: True/False
+        Returns True if successful, False otherwise.
+        """
+        client_map = {
+            "is_home": self.is_home_client,
+            "is_ready": self.is_ready_client,
+            "gripper_is_open": self.gripper_is_open_client,
+        }
+        client = client_map.get(state_name)
+        if client is None:
+            self.get_logger().error(f"Unknown state name: {state_name}")
+            return False
+
+        try:
+            if not client.wait_for_service(timeout_sec=5.0):
+                self.get_logger().error(f"Service /{state_name} unavailable")
+                return False
+            request = GetSetBool.Request()
+            request.set = True
+            request.value = value
+            future = client.call_async(request)
+            rclpy.spin_until_future_complete(self, future)
+            response = future.result()
+            if response.success:
+                self.get_logger().info(f"Set {state_name} to {value}")
+                return True
+            else:
+                self.get_logger().error(f"Failed to set {state_name}: {response.message}")
+                return False
+        except Exception as e:
+            self.get_logger().error(f"ERROR in set_robot_state for {state_name}: {e}")
+            return False
 
     # -----------------------
     # Tool wrappers (LangChain)
@@ -222,11 +266,130 @@ class Ros2LLMAgentNode(Node):
                 result_future = goal_handle.get_result_async()
                 rclpy.spin_until_future_complete(self, result_future)
                 result = result_future.result().result
+                if result.success:
+                    self.set_robot_state("is_home", False)
+                    self.set_robot_state("is_ready", False)
                 return f"move_to_pose result: success={result.success}"
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
 
         tools.append(move_linear_to_pose)
+
+        @tool
+        def move_to_home() -> str:
+            """
+            Move robot to a predefined home pose.
+            """
+            tool_name = "move_to_home"
+            with self._tools_called_lock:
+                self._tools_called.append(tool_name)
+
+            try:
+                home_pose = Pose()
+                home_pose.position.x = 0.12
+                home_pose.position.y = 0.11
+                home_pose.position.z = 1.47
+                home_pose.orientation.x = 0.63
+                home_pose.orientation.y = -0.62
+                home_pose.orientation.z = 0.32
+                home_pose.orientation.w = -0.33
+
+                goal = PlanComplexCartesianSteps.Goal()
+                goal.target_pose = home_pose
+
+                if not self.move_action_client.wait_for_server(timeout_sec=5.0):
+                    return "Move action server unavailable"
+                send_future = self.move_action_client.send_goal_async(goal)
+                rclpy.spin_until_future_complete(self, send_future)
+                goal_handle = send_future.result()
+                if not goal_handle.accepted:
+                    return "Move action rejected"
+                result_future = goal_handle.get_result_async()
+                rclpy.spin_until_future_complete(self, result_future)
+                result = result_future.result().result
+                if result.success:
+                    self.set_robot_state("is_home", True)
+                    self.set_robot_state("is_ready", False)
+                return f"move_to_home result: success={result.success}"
+            except Exception as e:
+                return f"ERROR in {tool_name}: {e}"
+
+        tools.append(move_to_home)
+
+        @tool
+        def move_to_ready() -> str:
+            """
+            Move robot to a predefined ready pose.
+            """
+            tool_name = "move_to_ready"
+            with self._tools_called_lock:
+                self._tools_called.append(tool_name)
+
+            try:
+                ready_pose = Pose()
+                ready_pose.position.x = 0.48
+                ready_pose.position.y = 0.11
+                ready_pose.position.z = 1.23
+                ready_pose.orientation.x = -0.71
+                ready_pose.orientation.y = 0.71
+                ready_pose.orientation.z = 0.00
+                ready_pose.orientation.w = 0.00
+
+                goal = PlanComplexCartesianSteps.Goal()
+                goal.target_pose = ready_pose
+
+                if not self.move_action_client.wait_for_server(timeout_sec=5.0):
+                    return "Move action server unavailable"
+                send_future = self.move_action_client.send_goal_async(goal)
+                rclpy.spin_until_future_complete(self, send_future)
+                goal_handle = send_future.result()
+                if not goal_handle.accepted:
+                    return "Move action rejected"
+                result_future = goal_handle.get_result_async()
+                rclpy.spin_until_future_complete(self, result_future)
+                result = result_future.result().result
+                if result.success:
+                    self.set_robot_state("is_home", False)
+                    self.set_robot_state("is_ready", True)
+                return f"move_to_ready result: success={result.success}"
+            except Exception as e:
+                return f"ERROR in {tool_name}: {e}"
+        
+        tools.append(move_to_ready)
+
+        @tool
+        def orient_gripper_down() -> str:
+            """
+            Orient the gripper to face downwards.
+            """
+            tool_name = "orient_gripper_down"
+            with self._tools_called_lock:
+                self._tools_called.append(tool_name)
+
+            try:
+                goal = PlanComplexCartesianSteps.Goal()
+                down_orientation = Pose()
+                down_orientation.orientation.x = -0.69
+                down_orientation.orientation.y = 0.72
+                down_orientation.orientation.z = 0.00
+                down_orientation.orientation.w = 0.00
+                goal.target_pose = down_orientation
+
+                if not self.move_action_client.wait_for_server(timeout_sec=5.0):
+                    return "Move action server unavailable"
+                send_future = self.move_action_client.send_goal_async(goal)
+                rclpy.spin_until_future_complete(self, send_future)
+                goal_handle = send_future.result()
+                if not goal_handle.accepted:
+                    return "Move action rejected"
+                result_future = goal_handle.get_result_async()
+                rclpy.spin_until_future_complete(self, result_future)
+                result = result_future.result().result
+                return f"orient_gripper_down result: success={result.success}"
+            except Exception as e:
+                return f"ERROR in {tool_name}: {e}"
+
+        tools.append(orient_gripper_down)
 
         @tool
         def set_gripper_position(position: float, max_effort: float) -> str:
@@ -255,6 +418,8 @@ class Ros2LLMAgentNode(Node):
                     result_future = goal_handle.get_result_async()
                     rclpy.spin_until_future_complete(self, result_future)
                     result = result_future.result().result
+                    if result.reached_goal:
+                        self.set_robot_state("gripper_is_open", position == 0.0)
                     return f"set_gripper_position result: success={getattr(result, 'reached_goal', False)}"
                 else:
                     return "set_gripper_position not available for real hardware; use close_gripper service instead"
@@ -285,6 +450,7 @@ class Ros2LLMAgentNode(Node):
                 response = future.result()
                 if response.success:
                     action = "closed" if close else "opened"
+                    self.set_robot_state("gripper_is_open", not close)
                     return f"Gripper successfully {action}."
                 else:
                     return f"Failed to {'close' if close else 'open'} gripper: {response.message}"
@@ -330,6 +496,8 @@ class Ros2LLMAgentNode(Node):
                 result = result_future.result().result
 
                 if result.success:
+                    self.set_robot_state("is_home", False)
+                    self.set_robot_state("is_ready", False)
                     return (f"✅ Relative motion executed successfully:\n"
                             f"Δx={dx:.3f}, Δy={dy:.3f}, Δz={dz:.3f}, "
                             f"roll={roll:.3f}, pitch={pitch:.3f}, yaw={yaw:.3f}")
@@ -569,8 +737,8 @@ class Ros2LLMAgentNode(Node):
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
                 "query sensors, perceive the environment, or command the robot: get_current_pose, get_joint_angles, "
-                "move_linear_to_pose, set_gripper_position, move_relative, detect_objects, classify_all, classify_bb, "
-                "detect_grasp, detect_grasp_bb, understand_scene.\n"
+                "move_linear_to_pose, set_gripper_position, move_relative, move_to_home, move_to_ready, orient_gripper_down, "
+                "detect_objects, classify_all, classify_bb, detect_grasp, detect_grasp_bb, understand_scene.\n"
                 "If you are **EXPLICITLY** instructed to **GRAB** an object, set the gripper position to 0.2. "
                 "If you are **EXPLICITLY** instructed to **CLOSE** the gripper, set the gripper position to 0.8. "
                 "If you are **EXPLICITLY** instructed to **RELEASE** an object, set the gripper position to 0.0. Always set max_effort to 0.01.\n"
@@ -584,9 +752,6 @@ class Ros2LLMAgentNode(Node):
                 "- The direction up is along positive Z axis, down is along negative Z axis.\n"
                 "- The direction forward is along positive X axis, backward is along negative X axis.\n"
                 "- The direction left is along positive Y axis, right is along negative Y axis.\n"
-                "- To orient the gripper to face downwards, set the orientation quaternion to (-0.69, 0.72, 0.00, 0.00).\n"
-                "- The home position pose is at x=0.12, y=0.11, z=1.47 with orientation quarternion (0.63, -0.62, 0.32, -0.33).\n"
-                "- The ready position pose is at x=0.48, y=0.11, z=1.23 with orientation quarternion (-0.71, 0.71, 0.00, 0.00).\n"
                 "- The human operator you are assisting is to your right side (negative Y direction).\n"
                 "- Use vision tools (detect_objects/classify_bb/detect_grasp_bb) to perceive which object to manipulate.\n"
                 "- For bbox-based tools, provide integer pixel coordinates [x1,y1,x2,y2].\n"
