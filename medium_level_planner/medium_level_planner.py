@@ -55,6 +55,8 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import BaseTool, tool
 from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_ollama import ChatOllama
+
 
 # dotenv
 from dotenv import load_dotenv
@@ -74,14 +76,30 @@ class Ros2LLMAgentNode(Node):
             self.get_logger().info("Running in REAL HARDWARE mode.")
         else:
             self.get_logger().info("Running in SIMULATION mode.")
+        self.declare_parameter("use_ollama", False)
+        self.use_ollama: bool = self.get_parameter("use_ollama").get_parameter_value().bool_value
 
-        # --- LangChain / LLM setup ---
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            self.get_logger().warn("No LLM API key found in environment variables GEMINI_API_KEY.")
 
-        # adjust model and API details as needed
-        self.llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=api_key, temperature=0.0)
+        # -----------------------------
+        # LLM Selection: Gemini or Ollama
+        # -----------------------------
+        if self.use_ollama:
+            self.get_logger().info("Using local LLM via Ollama.")
+            # Example: using llama3.1 or any model installed in `ollama list`
+            self.llm = ChatOllama(
+                model="gpt-oss:20b",   # <--- change to any local model you want
+                temperature=0.0
+            )
+        else:
+            api_key = os.getenv("GEMINI_API_KEY")
+            if not api_key:
+                self.get_logger().warn("No LLM API key found in environment variables GEMINI_API_KEY.")
+            self.get_logger().info("Using Google Gemini API LLM.")
+            self.llm = ChatGoogleGenerativeAI(
+                model="gemini-2.5-flash",
+                google_api_key=api_key,
+                temperature=0.0,
+            )
 
         # Action clients (motion / robot state)
         self.move_action_client = ActionClient(self, PlanComplexCartesianSteps, "/plan_complex_cartesian_steps")
