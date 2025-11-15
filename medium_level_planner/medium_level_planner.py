@@ -65,6 +65,56 @@ ENV_PATH = '/home/group11/final_project_ws/src/medium_level_planner/.env'
 load_dotenv(dotenv_path=ENV_PATH)
 
 
+# Simulation predefined poses
+SIM_HOME_POSE = Pose()
+SIM_HOME_POSE.position.x = 0.12
+SIM_HOME_POSE.position.y = 0.11
+SIM_HOME_POSE.position.z = 1.47
+SIM_HOME_POSE.orientation.x = 0.63
+SIM_HOME_POSE.orientation.y = -0.62
+SIM_HOME_POSE.orientation.z = 0.32
+SIM_HOME_POSE.orientation.w = -0.33
+
+SIM_READY_POSE = Pose()
+SIM_READY_POSE.position.x = 0.48
+SIM_READY_POSE.position.y = 0.11
+SIM_READY_POSE.position.z = 1.23
+SIM_READY_POSE.orientation.x = -0.71
+SIM_READY_POSE.orientation.y = 0.71
+SIM_READY_POSE.orientation.z = 0.00
+SIM_READY_POSE.orientation.w = 0.00
+
+SIM_ORIENT_DOWN_POSE = Pose()
+SIM_ORIENT_DOWN_POSE.orientation.x = -0.69
+SIM_ORIENT_DOWN_POSE.orientation.y = 0.72
+SIM_ORIENT_DOWN_POSE.orientation.z = 0.00
+SIM_ORIENT_DOWN_POSE.orientation.w = 0.00
+
+# Real Hardware predefined poses
+REAL_HOME_POSE = Pose()
+REAL_HOME_POSE.position.x = 0.12
+REAL_HOME_POSE.position.y = 0.11
+REAL_HOME_POSE.position.z = 1.47
+REAL_HOME_POSE.orientation.x = 0.63
+REAL_HOME_POSE.orientation.y = -0.62
+REAL_HOME_POSE.orientation.z = 0.32
+REAL_HOME_POSE.orientation.w = -0.33 
+
+REAL_READY_POSE = Pose()
+REAL_READY_POSE.position.x = 0.48
+REAL_READY_POSE.position.y = 0.11
+REAL_READY_POSE.position.z = 1.23
+REAL_READY_POSE.orientation.x = -0.71
+REAL_READY_POSE.orientation.y = 0.71
+REAL_READY_POSE.orientation.z = 0.00
+REAL_READY_POSE.orientation.w = 0.00
+
+REAL_ORIENT_DOWN_POSE = Pose()
+REAL_ORIENT_DOWN_POSE.orientation.x = -0.69
+REAL_ORIENT_DOWN_POSE.orientation.y = 0.72
+REAL_ORIENT_DOWN_POSE.orientation.z = 0.00
+REAL_ORIENT_DOWN_POSE.orientation.w = 0.00
+
 class Ros2LLMAgentNode(Node):
     def __init__(self):
         super().__init__("ros2_llm_agent")
@@ -303,14 +353,7 @@ class Ros2LLMAgentNode(Node):
                 self._tools_called.append(tool_name)
 
             try:
-                home_pose = Pose()
-                home_pose.position.x = 0.12
-                home_pose.position.y = 0.11
-                home_pose.position.z = 1.47
-                home_pose.orientation.x = 0.63
-                home_pose.orientation.y = -0.62
-                home_pose.orientation.z = 0.32
-                home_pose.orientation.w = -0.33
+                home_pose = SIM_HOME_POSE if not self.real_hardware else REAL_HOME_POSE
 
                 goal = PlanComplexCartesianSteps.Goal()
                 goal.target_pose = home_pose
@@ -344,14 +387,7 @@ class Ros2LLMAgentNode(Node):
                 self._tools_called.append(tool_name)
 
             try:
-                ready_pose = Pose()
-                ready_pose.position.x = 0.48
-                ready_pose.position.y = 0.11
-                ready_pose.position.z = 1.23
-                ready_pose.orientation.x = -0.71
-                ready_pose.orientation.y = 0.71
-                ready_pose.orientation.z = 0.00
-                ready_pose.orientation.w = 0.00
+                ready_pose = SIM_READY_POSE if not self.real_hardware else REAL_READY_POSE
 
                 goal = PlanComplexCartesianSteps.Goal()
                 goal.target_pose = ready_pose
@@ -746,10 +782,20 @@ class Ros2LLMAgentNode(Node):
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
                 "query sensors, perceive the environment, or command the robot: get_current_pose, get_joint_angles, "
-                "move_linear_to_pose, close_gripper, move_relative, detect_objects, classify_all, classify_bb, "
-                "detect_grasp, detect_grasp_bb, understand_scene.\n"
+                "move_linear_to_pose, set_gripper_position, move_relative, move_to_home, move_to_ready, orient_gripper_down, "
+                "detect_objects, classify_all, classify_bb, detect_grasp, detect_grasp_bb, understand_scene.\n"
+                "If you are instructed to move a certain direction (e.g., UP, DOWN, FORWARD, BACKWARD, LEFT, RIGHT), use the move_relative tool with small increments (e.g., 0.05m).\n"
+                "If you are instructed to move to position you don't know, make reasonable assumptions, DO NOT ask for clarification.\n"
                 "When you choose to use a tool, call it with appropriate arguments (if any). "
-                "Return a final, concise, actionable response after using tools."
+                "Return a final, concise, actionable response after using tools.\n"
+                "Here is environment guidance:\n"
+                "- You can get your current gripper cartesian position by using the get_current_pose tool.\n"
+                "- The direction up is along positive Z axis, down is along negative Z axis.\n"
+                "- The direction forward is along positive X axis, backward is along negative X axis.\n"
+                "- The direction left is along positive Y axis, right is along negative Y axis.\n"
+                "- The human operator you are assisting is to your right side (negative Y direction).\n"
+                "- Use vision tools (detect_objects/classify_bb/detect_grasp_bb) to perceive which object to manipulate.\n"
+                "- For bbox-based tools, provide integer pixel coordinates [x1,y1,x2,y2].\n"
             )
         else:
             system_message = (
