@@ -92,27 +92,27 @@ SIM_ORIENT_DOWN_POSE.orientation.w = 0.00
 
 # Real Hardware predefined poses
 REAL_HOME_POSE = Pose()
-REAL_HOME_POSE.position.x = 0.12
-REAL_HOME_POSE.position.y = 0.11
-REAL_HOME_POSE.position.z = 1.47
-REAL_HOME_POSE.orientation.x = 0.63
-REAL_HOME_POSE.orientation.y = -0.62
-REAL_HOME_POSE.orientation.z = 0.32
-REAL_HOME_POSE.orientation.w = -0.33 
+REAL_HOME_POSE.position.x = -0.132
+REAL_HOME_POSE.position.y = -0.2492
+REAL_HOME_POSE.position.z = 0.694
+REAL_HOME_POSE.orientation.x = 0.01516
+REAL_HOME_POSE.orientation.y = 0.0
+REAL_HOME_POSE.orientation.z = 0.707
+REAL_HOME_POSE.orientation.w = -0.707
 
 REAL_READY_POSE = Pose()
-REAL_READY_POSE.position.x = 0.48
-REAL_READY_POSE.position.y = 0.11
-REAL_READY_POSE.position.z = 1.23
-REAL_READY_POSE.orientation.x = -0.71
-REAL_READY_POSE.orientation.y = 0.71
-REAL_READY_POSE.orientation.z = 0.00
+REAL_READY_POSE.position.x = -0.1309
+REAL_READY_POSE.position.y = -0.2982
+REAL_READY_POSE.position.z = 0.14625
+REAL_READY_POSE.orientation.x = 0.0
+REAL_READY_POSE.orientation.y = 0.0
+REAL_READY_POSE.orientation.z = 1.0
 REAL_READY_POSE.orientation.w = 0.00
 
 REAL_ORIENT_DOWN_POSE = Pose()
-REAL_ORIENT_DOWN_POSE.orientation.x = -0.69
-REAL_ORIENT_DOWN_POSE.orientation.y = 0.72
-REAL_ORIENT_DOWN_POSE.orientation.z = 0.00
+REAL_ORIENT_DOWN_POSE.orientation.x = 0.0
+REAL_ORIENT_DOWN_POSE.orientation.y = 0.0
+REAL_ORIENT_DOWN_POSE.orientation.z = 1.0
 REAL_ORIENT_DOWN_POSE.orientation.w = 0.00
 
 class Ros2LLMAgentNode(Node):
