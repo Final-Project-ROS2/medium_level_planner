@@ -803,6 +803,7 @@ class Ros2LLMAgentNode(Node):
                 "query sensors, perceive the environment, or command the robot: get_current_pose, get_joint_angles, "
                 "move_linear_to_pose, set_gripper_position, move_relative, move_to_home, move_to_ready, orient_gripper_down, "
                 "detect_objects, classify_all, classify_bb, detect_grasp, detect_grasp_bb, understand_scene.\n"
+                "If you are **EXPLICITLY** instructed to **OPEN** the gripper, set the gripper position to 0.0. "
                 "If you are **EXPLICITLY** instructed to **GRAB** an object, set the gripper position to 0.2. "
                 "If you are **EXPLICITLY** instructed to **CLOSE** the gripper, set the gripper position to 0.8. "
                 "If you are **EXPLICITLY** instructed to **RELEASE** an object, set the gripper position to 0.0. Always set max_effort to 0.01.\n"
