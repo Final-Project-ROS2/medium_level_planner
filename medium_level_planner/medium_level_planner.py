@@ -154,7 +154,7 @@ class Ros2LLMAgentNode(Node):
         # Action clients (motion / robot state)
         self.move_action_client = ActionClient(self, PlanComplexCartesianSteps, "/plan_complex_cartesian_steps")
         self.pose_action_client = ActionClient(self, GetCurrentPose, "/get_current_pose")
-        self.joint_action_client = ActionClient(self, GetJointAngles, "/get_joint_angles")  # fixed name
+        self.joint_action_client = ActionClient(self, GetJointAngles, "/get_joint_angles")
         self.relative_action_client = ActionClient(self, MoveitRelative, "/plan_cartesian_relative")
 
         if self.real_hardware:

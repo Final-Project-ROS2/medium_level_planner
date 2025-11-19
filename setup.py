@@ -20,7 +20,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'medium_level_planner = medium_level_planner.medium_level_planner:main'
+            'medium_level_planner = medium_level_planner.medium_level_planner:main',
+            'move_to_pose_service = medium_level_planner.move_to_pose:main',
         ],
     },
 )
