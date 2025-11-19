@@ -9,6 +9,7 @@ Extended Ros2 LLM Agent Node with vision tools including bbox-based services:
 - /vision/detect_grasp          -> custom_interfaces.srv.DetectGrasps
 - /vision/detect_grasp_bb       -> custom_interfaces.srv.DetectGraspBBox
 - /vision/understand_scene      -> custom_interfaces.srv.UnderstandScene
+- /vision/find_object           -> custom_interfaces.srv.FindObjectReal
 
 Motion/action tools preserved:
 - /plan_complex_cartesian_steps (PlanComplexCartesianSteps action)
@@ -46,6 +47,7 @@ from custom_interfaces.srv import (
     DetectGrasps,
     DetectGraspBBox,
     UnderstandScene,
+    FindObjectReal,
 )
 
 from custom_interfaces.srv import GetSetBool
@@ -169,6 +171,7 @@ class Ros2LLMAgentNode(Node):
         self.vision_detect_grasp_client = self.create_client(DetectGrasps, "/vision/detect_grasp")
         self.vision_detect_grasp_bb_client = self.create_client(DetectGraspBBox, "/vision/detect_grasp_bb")
         self.vision_understand_scene_client = self.create_client(UnderstandScene, "/vision/understand_scene")
+        self.find_object_client = self.create_client(FindObjectReal, "/find_object")
 
         # PDDL state service clients
         self.is_home_client = self.create_client(GetSetBool, "/is_home")
@@ -769,6 +772,36 @@ class Ros2LLMAgentNode(Node):
 
         tools.append(understand_scene)
 
+        @tool
+        def find_object(object_name: str) -> str:
+            """
+            Call /find_object which returns the position of the specified object.
+            """
+            tool_name = "find_object"
+            with self._tools_called_lock:
+                self._tools_called.append(tool_name)
+            try:
+                if not self.find_object_client.wait_for_service(timeout_sec=5.0):
+                    return "Service /find_object unavailable"
+                req = FindObjectReal.Request()
+                req.label = object_name
+                future = self.find_object_client.call_async(req)
+                rclpy.spin_until_future_complete(self, future)
+                resp = future.result()
+                if resp is None:
+                    return "No response from /find_object"
+                if not resp.success:
+                    return f"find_object failed: {resp.error_message or 'unknown'}"
+                x = resp.x 
+                y = resp.y
+                if x is None or y is None:
+                    return f"{object_name} not found in the scene."
+                return f"{object_name} is at position x={x:.3f}, y={y:.3f}."
+            except Exception as e:
+                return f"ERROR in find_object: {e}"
+
+        tools.append(find_object)
+
         return tools
 
     # -----------------------
@@ -807,6 +840,7 @@ class Ros2LLMAgentNode(Node):
                 "If you are **EXPLICITLY** instructed to **GRAB** an object, set the gripper position to 0.2. "
                 "If you are **EXPLICITLY** instructed to **CLOSE** the gripper, set the gripper position to 0.8. "
                 "If you are **EXPLICITLY** instructed to **RELEASE** an object, set the gripper position to 0.0. Always set max_effort to 0.01.\n"
+                "If you are instructed to move to an object, use find_object to get its (x, y) position, then use move_linear_to_pose to go there, keeping all other pose and orienation the same.\n"
                 "If you are instructed to move a certain direction (e.g., UP, DOWN, FORWARD, BACKWARD, LEFT, RIGHT), use the move_relative tool with small increments (e.g., 0.1m).\n"
                 "If you are instructed to move to position you don't know, make reasonable assumptions, DO NOT ask for clarification.\n"
                 "When you choose to use a tool, call it with appropriate arguments (if any). "
