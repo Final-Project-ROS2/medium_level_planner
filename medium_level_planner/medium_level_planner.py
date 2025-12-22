@@ -87,6 +87,15 @@ SIM_READY_POSE.orientation.y = 0.71
 SIM_READY_POSE.orientation.z = 0.00
 SIM_READY_POSE.orientation.w = 0.00
 
+SIM_HANDOVER_POSE = Pose()
+SIM_HANDOVER_POSE.position.x = 0.48
+SIM_HANDOVER_POSE.position.y = 0.11
+SIM_HANDOVER_POSE.position.z = 1.23
+SIM_HANDOVER_POSE.orientation.x = -0.71
+SIM_HANDOVER_POSE.orientation.y = 0.71
+SIM_HANDOVER_POSE.orientation.z = 0.00
+SIM_HANDOVER_POSE.orientation.w = 0.00
+
 SIM_ORIENT_DOWN_POSE = Pose()
 SIM_ORIENT_DOWN_POSE.orientation.x = -0.69
 SIM_ORIENT_DOWN_POSE.orientation.y = 0.72
@@ -111,6 +120,15 @@ REAL_READY_POSE.orientation.x = 1.0
 REAL_READY_POSE.orientation.y = 0.0
 REAL_READY_POSE.orientation.z = 0.0
 REAL_READY_POSE.orientation.w = 0.00
+
+REAL_HANDOVER_POSE = Pose()
+REAL_HANDOVER_POSE.position.x = 0.131
+REAL_HANDOVER_POSE.position.y = 0.2982
+REAL_HANDOVER_POSE.position.z = 0.303
+REAL_HANDOVER_POSE.orientation.x = 1.0
+REAL_HANDOVER_POSE.orientation.y = 0.0
+REAL_HANDOVER_POSE.orientation.z = 0.0
+REAL_HANDOVER_POSE.orientation.w = 0.00
 
 REAL_ORIENT_DOWN_POSE = Pose()
 REAL_ORIENT_DOWN_POSE.orientation.x = 1.0
