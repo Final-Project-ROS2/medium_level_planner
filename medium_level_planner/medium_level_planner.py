@@ -178,6 +178,7 @@ class Ros2LLMAgentNode(Node):
         # PDDL state service clients
         self.is_home_client = self.create_client(GetSetBool, "/is_home")
         self.is_ready_client = self.create_client(GetSetBool, "/is_ready")
+        self.is_handover_client = self.create_client(GetSetBool, "/is_handover")
         self.gripper_is_open_client = self.create_client(GetSetBool, "/gripper_is_open")
 
         # Shared state for tracking which tools were called during one prompt execution
@@ -205,13 +206,14 @@ class Ros2LLMAgentNode(Node):
     def set_robot_state(self, state_name: str, value: bool) -> bool:
         """
         Set robot state via PDDL state services.
-        state_name: 'is_home', 'is_ready', 'gripper_is_open'
+        state_name: 'is_home', 'is_ready', 'is_handover', 'gripper_is_open'
         value: True/False
         Returns True if successful, False otherwise.
         """
         client_map = {
             "is_home": self.is_home_client,
             "is_ready": self.is_ready_client,
+            "is_handover": self.is_handover_client,
             "gripper_is_open": self.gripper_is_open_client,
         }
         client = client_map.get(state_name)
@@ -342,6 +344,7 @@ class Ros2LLMAgentNode(Node):
                 if result.success:
                     self.set_robot_state("is_home", False)
                     self.set_robot_state("is_ready", False)
+                    self.set_robot_state("is_handover", False)
                 return f"move_to_pose result: success={result.success}"
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
@@ -376,6 +379,7 @@ class Ros2LLMAgentNode(Node):
                 if result.success:
                     self.set_robot_state("is_home", True)
                     self.set_robot_state("is_ready", False)
+                    self.set_robot_state("is_handover", False)
                 return f"move_to_home result: success={result.success}"
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
@@ -410,11 +414,46 @@ class Ros2LLMAgentNode(Node):
                 if result.success:
                     self.set_robot_state("is_home", False)
                     self.set_robot_state("is_ready", True)
+                    self.set_robot_state("is_handover", False)
                 return f"move_to_ready result: success={result.success}"
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
         
         tools.append(move_to_ready)
+
+        @tool
+        def move_to_handover() -> str:
+            """
+            Move robot to a predefined ready pose.
+            """
+            tool_name = "move_to_handover"
+            with self._tools_called_lock:
+                self._tools_called.append(tool_name)
+
+            try:
+                handover_pose = SIM_HANDOVER_POSE if not self.real_hardware else REAL_HANDOVER_POSE
+
+                goal = PlanComplexCartesianSteps.Goal()
+                goal.target_pose = handover_pose
+                if not self.move_action_client.wait_for_server(timeout_sec=5.0):
+                    return "Move action server unavailable"
+                send_future = self.move_action_client.send_goal_async(goal)
+                rclpy.spin_until_future_complete(self, send_future)
+                goal_handle = send_future.result()
+                if not goal_handle.accepted:
+                    return "Move action rejected"
+                result_future = goal_handle.get_result_async()
+                rclpy.spin_until_future_complete(self, result_future)
+                result = result_future.result().result
+                if result.success:
+                    self.set_robot_state("is_home", False)
+                    self.set_robot_state("is_ready", False)
+                    self.set_robot_state("is_handover", True)
+                return f"move_to_handover result: success={result.success}"
+            except Exception as e:
+                return f"ERROR in {tool_name}: {e}"
+        
+        tools.append(move_to_handover)
 
         @tool
         def orient_gripper_down() -> str:
@@ -557,6 +596,7 @@ class Ros2LLMAgentNode(Node):
                 if result.success:
                     self.set_robot_state("is_home", False)
                     self.set_robot_state("is_ready", False)
+                    self.set_robot_state("is_handover", False)
                     return (f"✅ Relative motion executed successfully:\n"
                             f"Δx={dx:.3f}, Δy={dy:.3f}, Δz={dz:.3f}, "
                             f"roll={roll:.3f}, pitch={pitch:.3f}, yaw={yaw:.3f}")
@@ -817,7 +857,7 @@ class Ros2LLMAgentNode(Node):
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
                 "query sensors, perceive the environment, or command the robot: get_current_pose, get_joint_angles, "
-                "move_linear_to_pose, set_gripper_position, move_relative, move_to_home, move_to_ready, orient_gripper_down, "
+                "move_linear_to_pose, set_gripper_position, move_relative, move_to_home, move_to_ready, move_to_handover, orient_gripper_down, "
                 "detect_objects, classify_all, classify_bb, detect_grasp, detect_grasp_bb, understand_scene.\n"
                 "If you are instructed to move a certain direction (e.g., UP, DOWN, FORWARD, BACKWARD, LEFT, RIGHT), use the move_relative tool with small increments (e.g., 0.05m).\n"
                 "If you are instructed to move to position you don't know, make reasonable assumptions, DO NOT ask for clarification.\n"
@@ -837,7 +877,7 @@ class Ros2LLMAgentNode(Node):
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
                 "query sensors, perceive the environment, or command the robot: get_current_pose, get_joint_angles, "
-                "move_linear_to_pose, set_gripper_position, move_relative, move_to_home, move_to_ready, orient_gripper_down, "
+                "move_linear_to_pose, set_gripper_position, move_relative, move_to_home, move_to_ready, move_to_handover, orient_gripper_down, "
                 "detect_objects, classify_all, classify_bb, detect_grasp, detect_grasp_bb, understand_scene.\n"
                 "If you are **EXPLICITLY** instructed to **OPEN** the gripper, set the gripper position to 0.0. "
                 "If you are **EXPLICITLY** instructed to **GRAB** an object, set the gripper position to 0.2. "
