@@ -777,25 +777,25 @@ class Ros2LLMAgentNode(Node):
         @tool
         def find_object(object_name: str) -> str:
             """
-            Call /find_object which returns the position of the specified object.
+            Call /find_object_grasp which returns the position of the specified object.
             """
             tool_name = "find_object"
             with self._tools_called_lock:
                 self._tools_called.append(tool_name)
             try:
-                if not self.find_object_client.wait_for_service(timeout_sec=5.0):
-                    return "Service /find_object unavailable"
-                req = FindObjectReal.Request()
+                if not self.find_object_grasp_client.wait_for_service(timeout_sec=5.0):
+                    return "Service /find_object_grasp unavailable"
+                req = FindObjectGrasp.Request()
                 req.label = object_name
-                future = self.find_object_client.call_async(req)
+                future = self.find_object_grasp_client.call_async(req)
                 rclpy.spin_until_future_complete(self, future)
                 resp = future.result()
                 if resp is None:
-                    return "No response from /find_object"
+                    return "No response from /find_object_grasp"
                 if not resp.success:
-                    return f"find_object failed: {resp.error_message or 'unknown'}"
-                x = resp.x 
-                y = resp.y
+                    return f"find_object_grasp failed: {resp.error_message or 'unknown'}"
+                x = resp.grasp_pose.position.x
+                y = resp.grasp_pose.position.y
                 if x is None or y is None:
                     return f"{object_name} not found in the scene."
                 return f"{object_name} is at position x={x:.3f}, y={y:.3f}."
