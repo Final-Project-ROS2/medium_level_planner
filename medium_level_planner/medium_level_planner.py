@@ -87,6 +87,15 @@ SIM_READY_POSE.orientation.y = 0.71
 SIM_READY_POSE.orientation.z = 0.00
 SIM_READY_POSE.orientation.w = 0.00
 
+SIM_HANDOVER_POSE = Pose()
+SIM_HANDOVER_POSE.position.x = 0.48
+SIM_HANDOVER_POSE.position.y = 0.5
+SIM_HANDOVER_POSE.position.z = 1.23
+SIM_HANDOVER_POSE.orientation.x = -0.71
+SIM_HANDOVER_POSE.orientation.y = 0.71
+SIM_HANDOVER_POSE.orientation.z = 0.00
+SIM_HANDOVER_POSE.orientation.w = 0.00
+
 SIM_ORIENT_DOWN_POSE = Pose()
 SIM_ORIENT_DOWN_POSE.orientation.x = -0.69
 SIM_ORIENT_DOWN_POSE.orientation.y = 0.72
@@ -111,6 +120,15 @@ REAL_READY_POSE.orientation.x = 1.0
 REAL_READY_POSE.orientation.y = 0.0
 REAL_READY_POSE.orientation.z = 0.0
 REAL_READY_POSE.orientation.w = 0.00
+
+REAL_HANDOVER_POSE = Pose()
+REAL_HANDOVER_POSE.position.x = 0.131
+REAL_HANDOVER_POSE.position.y = 0.2982
+REAL_HANDOVER_POSE.position.z = 0.303
+REAL_HANDOVER_POSE.orientation.x = 1.0
+REAL_HANDOVER_POSE.orientation.y = 0.0
+REAL_HANDOVER_POSE.orientation.z = 0.0
+REAL_HANDOVER_POSE.orientation.w = 0.00
 
 REAL_ORIENT_DOWN_POSE = Pose()
 REAL_ORIENT_DOWN_POSE.orientation.x = 1.0
@@ -417,6 +435,41 @@ class Ros2LLMAgentNode(Node):
         tools.append(move_to_ready)
 
         @tool
+        def move_to_handover() -> str:
+            """
+            Move robot to a predefined ready pose.
+            """
+            tool_name = "move_to_handover"
+            with self._tools_called_lock:
+                self._tools_called.append(tool_name)
+
+            try:
+                handover_pose = SIM_HANDOVER_POSE if not self.real_hardware else REAL_HANDOVER_POSE
+
+                goal = PlanComplexCartesianSteps.Goal()
+                goal.target_pose = handover_pose
+
+                if not self.move_action_client.wait_for_server(timeout_sec=5.0):
+                    return "Move action server unavailable"
+                send_future = self.move_action_client.send_goal_async(goal)
+                rclpy.spin_until_future_complete(self, send_future)
+                goal_handle = send_future.result()
+                if not goal_handle.accepted:
+                    return "Move action rejected"
+                result_future = goal_handle.get_result_async()
+                rclpy.spin_until_future_complete(self, result_future)
+                result = result_future.result().result
+                if result.success:
+                    self.set_robot_state("is_home", False)
+                    self.set_robot_state("is_ready", False)
+                    self.set_robot_state("is_handover", True)
+                return f"move_to_handover result: success={result.success}"
+            except Exception as e:
+                return f"ERROR in {tool_name}: {e}"
+        
+        tools.append(move_to_handover)
+
+        @tool
         def orient_gripper_down() -> str:
             """
             Orient the gripper to face downwards.
@@ -609,7 +662,7 @@ class Ros2LLMAgentNode(Node):
             except Exception as e:
                 return f"ERROR in detect_objects: {e}"
 
-        tools.append(detect_objects)
+        # tools.append(detect_objects)
 
         @tool
         def classify_all() -> str:
@@ -632,7 +685,7 @@ class Ros2LLMAgentNode(Node):
             except Exception as e:
                 return f"ERROR in classify_all: {e}"
 
-        tools.append(classify_all)
+        # tools.append(classify_all)
 
         @tool
         def classify_bb(x1: int, y1: int, x2: int, y2: int) -> str:
@@ -668,7 +721,7 @@ class Ros2LLMAgentNode(Node):
             except Exception as e:
                 return f"ERROR in classify_bb: {e}"
 
-        tools.append(classify_bb)
+        # tools.append(classify_bb)
 
         @tool
         def detect_grasp() -> str:
@@ -703,7 +756,7 @@ class Ros2LLMAgentNode(Node):
             except Exception as e:
                 return f"ERROR in detect_grasp: {e}"
 
-        tools.append(detect_grasp)
+        # tools.append(detect_grasp)
 
         @tool
         def detect_grasp_bb(x1: int, y1: int, x2: int, y2: int) -> str:
@@ -739,7 +792,7 @@ class Ros2LLMAgentNode(Node):
             except Exception as e:
                 return f"ERROR in detect_grasp_bb: {e}"
 
-        tools.append(detect_grasp_bb)
+        # tools.append(detect_grasp_bb)
 
         @tool
         def understand_scene() -> str:
@@ -772,7 +825,7 @@ class Ros2LLMAgentNode(Node):
             except Exception as e:
                 return f"ERROR in understand_scene: {e}"
 
-        tools.append(understand_scene)
+        # tools.append(understand_scene)
 
         @tool
         def find_object(object_name: str) -> str:
@@ -817,9 +870,11 @@ class Ros2LLMAgentNode(Node):
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
                 "query sensors, perceive the environment, or command the robot: get_current_pose, get_joint_angles, "
-                "move_linear_to_pose, set_gripper_position, move_relative, move_to_home, move_to_ready, orient_gripper_down, "
-                "detect_objects, classify_all, classify_bb, detect_grasp, detect_grasp_bb, understand_scene.\n"
+                "move_linear_to_pose, set_gripper_position, move_relative, move_to_home, move_to_ready, move_to_handover, orient_gripper_down, find_object"
+                # "detect_objects, classify_all, classify_bb, detect_grasp, detect_grasp_bb, understand_scene.\n"
+                "If you are instructed to move to an object, use find_object to get its (x, y) position, then use move_linear_to_pose to go there, keeping all other pose and orienation the same.\n"
                 "If you are instructed to move a certain direction (e.g., UP, DOWN, FORWARD, BACKWARD, LEFT, RIGHT), use the move_relative tool with small increments (e.g., 0.05m).\n"
+                "If you are instructed to pick up an object, make sure your at ready, open the gripper first, move to the object, move down, then close the gripper.\n"
                 "If you are instructed to move to position you don't know, make reasonable assumptions, DO NOT ask for clarification.\n"
                 "When you choose to use a tool, call it with appropriate arguments (if any). "
                 "Return a final, concise, actionable response after using tools.\n"
@@ -837,14 +892,15 @@ class Ros2LLMAgentNode(Node):
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
                 "query sensors, perceive the environment, or command the robot: get_current_pose, get_joint_angles, "
-                "move_linear_to_pose, set_gripper_position, move_relative, move_to_home, move_to_ready, orient_gripper_down, "
-                "detect_objects, classify_all, classify_bb, detect_grasp, detect_grasp_bb, understand_scene.\n"
+                "move_linear_to_pose, set_gripper_position, move_relative, move_to_home, move_to_ready, move_to_handover, orient_gripper_down, find_object"
+                # "detect_objects, classify_all, classify_bb, detect_grasp, detect_grasp_bb, understand_scene.\n"
                 "If you are **EXPLICITLY** instructed to **OPEN** the gripper, set the gripper position to 0.0. "
                 "If you are **EXPLICITLY** instructed to **GRAB** an object, set the gripper position to 0.2. "
                 "If you are **EXPLICITLY** instructed to **CLOSE** the gripper, set the gripper position to 0.8. "
                 "If you are **EXPLICITLY** instructed to **RELEASE** an object, set the gripper position to 0.0. Always set max_effort to 0.01.\n"
                 "If you are instructed to move to an object, use find_object to get its (x, y) position, then use move_linear_to_pose to go there, keeping all other pose and orienation the same.\n"
                 "If you are instructed to move a certain direction (e.g., UP, DOWN, FORWARD, BACKWARD, LEFT, RIGHT), use the move_relative tool with small increments (e.g., 0.1m).\n"
+                "If you are instructed to pick up an object, make sure your at ready, open the gripper first, move to the object, move down, then close the gripper.\n"
                 "If you are instructed to move to position you don't know, make reasonable assumptions, DO NOT ask for clarification.\n"
                 "When you choose to use a tool, call it with appropriate arguments (if any). "
                 "Return a final, concise, actionable response after using tools.\n"
