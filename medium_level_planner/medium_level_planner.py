@@ -830,28 +830,29 @@ class Ros2LLMAgentNode(Node):
         @tool
         def find_object(object_name: str) -> str:
             """
-            Call /find_object_grasp which returns the position of the specified object.
+            Call /find_object which returns the position of the specified object.
             """
             tool_name = "find_object"
             with self._tools_called_lock:
                 self._tools_called.append(tool_name)
             try:
-                if not self.find_object_grasp_client.wait_for_service(timeout_sec=5.0):
-                    return "Service /find_object_grasp unavailable"
-                req = FindObjectGrasp.Request()
+                if not self.find_object_client.wait_for_service(timeout_sec=5.0):
+                    return "Service /find_object unavailable"
+                req = FindObjectReal.Request()
                 req.label = object_name
-                future = self.find_object_grasp_client.call_async(req)
+                future = self.find_object_client.call_async(req)
                 rclpy.spin_until_future_complete(self, future)
                 resp = future.result()
                 if resp is None:
-                    return "No response from /find_object_grasp"
+                    return "No response from /find_object"
                 if not resp.success:
-                    return f"find_object_grasp failed: {resp.error_message or 'unknown'}"
-                x = resp.grasp_pose.position.x
-                y = resp.grasp_pose.position.y
-                if x is None or y is None:
+                    return f"find_object failed: {resp.error_message or 'unknown'}"
+                x = resp.x
+                y = resp.y
+                z = resp.z
+                if x is None or y is None or z is None:
                     return f"{object_name} not found in the scene."
-                return f"{object_name} is at position x={x:.3f}, y={y:.3f}."
+                return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={z:.3f}."
             except Exception as e:
                 return f"ERROR in find_object: {e}"
 
@@ -872,7 +873,7 @@ class Ros2LLMAgentNode(Node):
                 "query sensors, perceive the environment, or command the robot: get_current_pose, get_joint_angles, "
                 "move_linear_to_pose, set_gripper_position, move_relative, move_to_home, move_to_ready, move_to_handover, orient_gripper_down, find_object"
                 # "detect_objects, classify_all, classify_bb, detect_grasp, detect_grasp_bb, understand_scene.\n"
-                "If you are instructed to move to an object, use find_object to get its (x, y) position, then use move_linear_to_pose to go there, keeping all other pose and orienation the same.\n"
+                "If you are instructed to move to an object, use find_object to get its (x, y, z) position, then use move_linear_to_pose to go there, keeping all orienation the same.\n"
                 "If you are instructed to move a certain direction (e.g., UP, DOWN, FORWARD, BACKWARD, LEFT, RIGHT), use the move_relative tool with small increments (e.g., 0.05m).\n"
                 "If you are instructed to pick up an object, make sure your at ready, open the gripper first, move to the object, move down, then close the gripper.\n"
                 "If you are instructed to move to position you don't know, make reasonable assumptions, DO NOT ask for clarification.\n"
@@ -898,7 +899,7 @@ class Ros2LLMAgentNode(Node):
                 "If you are **EXPLICITLY** instructed to **GRAB** an object, set the gripper position to 0.2. "
                 "If you are **EXPLICITLY** instructed to **CLOSE** the gripper, set the gripper position to 0.8. "
                 "If you are **EXPLICITLY** instructed to **RELEASE** an object, set the gripper position to 0.0. Always set max_effort to 0.01.\n"
-                "If you are instructed to move to an object, use find_object to get its (x, y) position, then use move_linear_to_pose to go there, keeping all other pose and orienation the same.\n"
+                "If you are instructed to move to an object, use find_object to get its (x, y, z) position, then use move_linear_to_pose to go there, keeping all orientation the same.\n"
                 "If you are instructed to move a certain direction (e.g., UP, DOWN, FORWARD, BACKWARD, LEFT, RIGHT), use the move_relative tool with small increments (e.g., 0.1m).\n"
                 "If you are instructed to pick up an object, make sure your at ready, open the gripper first, move to the object, move down, then close the gripper.\n"
                 "If you are instructed to move to position you don't know, make reasonable assumptions, DO NOT ask for clarification.\n"
