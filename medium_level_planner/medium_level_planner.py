@@ -89,7 +89,7 @@ SIM_READY_POSE.orientation.w = 0.00
 
 SIM_HANDOVER_POSE = Pose()
 SIM_HANDOVER_POSE.position.x = 0.48
-SIM_HANDOVER_POSE.position.y = 0.5
+SIM_HANDOVER_POSE.position.y = -0.5
 SIM_HANDOVER_POSE.position.z = 1.23
 SIM_HANDOVER_POSE.orientation.x = -0.71
 SIM_HANDOVER_POSE.orientation.y = 0.71
@@ -122,8 +122,8 @@ REAL_READY_POSE.orientation.z = 0.0
 REAL_READY_POSE.orientation.w = 0.00
 
 REAL_HANDOVER_POSE = Pose()
-REAL_HANDOVER_POSE.position.x = 0.131
-REAL_HANDOVER_POSE.position.y = 0.2982
+REAL_HANDOVER_POSE.position.x = 0.531
+REAL_HANDOVER_POSE.position.y = 0.1482
 REAL_HANDOVER_POSE.position.z = 0.303
 REAL_HANDOVER_POSE.orientation.x = 1.0
 REAL_HANDOVER_POSE.orientation.y = 0.0
@@ -197,6 +197,7 @@ class Ros2LLMAgentNode(Node):
         self.is_home_client = self.create_client(GetSetBool, "/is_home")
         self.is_ready_client = self.create_client(GetSetBool, "/is_ready")
         self.gripper_is_open_client = self.create_client(GetSetBool, "/gripper_is_open")
+        self.is_handover_client = self.create_client(GetSetBool, "/is_handover")
 
         # Shared state for tracking which tools were called during one prompt execution
         self._tools_called: List[str] = []
@@ -231,6 +232,7 @@ class Ros2LLMAgentNode(Node):
             "is_home": self.is_home_client,
             "is_ready": self.is_ready_client,
             "gripper_is_open": self.gripper_is_open_client,
+            "is_handover": self.is_handover_client,
         }
         client = client_map.get(state_name)
         if client is None:
@@ -360,6 +362,7 @@ class Ros2LLMAgentNode(Node):
                 if result.success:
                     self.set_robot_state("is_home", False)
                     self.set_robot_state("is_ready", False)
+                    self.set_robot_state("is_handover", False)
                 return f"move_to_pose result: success={result.success}"
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
@@ -394,6 +397,7 @@ class Ros2LLMAgentNode(Node):
                 if result.success:
                     self.set_robot_state("is_home", True)
                     self.set_robot_state("is_ready", False)
+                    self.set_robot_state("is_handover", False)
                 return f"move_to_home result: success={result.success}"
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
@@ -428,6 +432,7 @@ class Ros2LLMAgentNode(Node):
                 if result.success:
                     self.set_robot_state("is_home", False)
                     self.set_robot_state("is_ready", True)
+                    self.set_robot_state("is_handover", False)
                 return f"move_to_ready result: success={result.success}"
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
@@ -610,6 +615,7 @@ class Ros2LLMAgentNode(Node):
                 if result.success:
                     self.set_robot_state("is_home", False)
                     self.set_robot_state("is_ready", False)
+                    self.set_robot_state("is_handover", False)
                     return (f"✅ Relative motion executed successfully:\n"
                             f"Δx={dx:.3f}, Δy={dy:.3f}, Δz={dz:.3f}, "
                             f"roll={roll:.3f}, pitch={pitch:.3f}, yaw={yaw:.3f}")
