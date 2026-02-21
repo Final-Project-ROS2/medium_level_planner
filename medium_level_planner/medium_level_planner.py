@@ -149,7 +149,8 @@ class Ros2LLMAgentNode(Node):
             self.get_logger().info("Running in SIMULATION mode.")
         self.declare_parameter("use_ollama", False)
         self.use_ollama: bool = self.get_parameter("use_ollama").get_parameter_value().bool_value
-
+        self.declare_parameter("ollama_model", "gpt-oss:20b")
+        self.ollama_model: str = self.get_parameter("ollama_model").get_parameter_value().string_value
 
         # -----------------------------
         # LLM Selection: Gemini or Ollama
@@ -158,7 +159,7 @@ class Ros2LLMAgentNode(Node):
             self.get_logger().info("Using local LLM via Ollama.")
             # Example: using llama3.1 or any model installed in `ollama list`
             self.llm = ChatOllama(
-                model="gpt-oss:20b",   # <--- change to any local model you want
+                model=self.ollama_model,   # <--- change to any local model you want
                 temperature=0.0
             )
         else:
@@ -627,6 +628,33 @@ class Ros2LLMAgentNode(Node):
 
         tools.append(move_relative)
 
+        @tool
+        def place_at(x: float, y: float, z: float) -> str:
+            """
+            Move to a position above the target, then opening the gripper.
+            """
+            tool_name = "place_at"
+            with self._tools_called_lock:
+                self._tools_called.append(tool_name)
+
+            try:
+                # Move to the target
+                result1 = move_linear_to_pose(x, y, z, 0, 0, 0, 1)
+                if "success=False" in result1:
+                    return f"Failed to move to target: {result1}"
+
+                # Open gripper
+                result2 = open_gripper()
+                if "success=False" in result2:
+                    return f"Failed to open gripper: {result2}"
+
+                return f"Successfully placed at ({x:.3f}, {y:.3f}, {z:.3f})"
+
+            except Exception as e:
+                return f"ERROR in {tool_name}: {e}"
+        
+        tools.append(place_at)
+
         # -------------------- Vision Tools --------------------
 
         @tool
@@ -877,7 +905,8 @@ class Ros2LLMAgentNode(Node):
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
                 "query sensors, perceive the environment, or command the robot: get_current_pose, get_joint_angles, "
-                "move_linear_to_pose, set_gripper_position, move_relative, move_to_home, move_to_ready, move_to_handover, orient_gripper_down, find_object"
+                "move_linear_to_pose, set_gripper_position, move_relative, move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, find_object"
+                f"home is at {REAL_HOME_POSE}, ready is at {REAL_READY_POSE}, handover is at {REAL_HANDOVER_POSE}.\n"
                 # "detect_objects, classify_all, classify_bb, detect_grasp, detect_grasp_bb, understand_scene.\n"
                 "If you are instructed to move to an object, use find_object to get its (x, y, z) position, then use move_linear_to_pose to go there, keeping all orienation the same.\n"
                 "If you are instructed to move a certain direction (e.g., UP, DOWN, FORWARD, BACKWARD, LEFT, RIGHT), use the move_relative tool with small increments (e.g., 0.05m).\n"
@@ -899,7 +928,8 @@ class Ros2LLMAgentNode(Node):
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
                 "query sensors, perceive the environment, or command the robot: get_current_pose, get_joint_angles, "
-                "move_linear_to_pose, set_gripper_position, move_relative, move_to_home, move_to_ready, move_to_handover, orient_gripper_down, find_object"
+                "move_linear_to_pose, set_gripper_position, move_relative, move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, find_object"
+                f"home is at {SIM_HOME_POSE}, ready is at {SIM_READY_POSE}, handover is at {SIM_HANDOVER_POSE}.\n"
                 # "detect_objects, classify_all, classify_bb, detect_grasp, detect_grasp_bb, understand_scene.\n"
                 "If you are **EXPLICITLY** instructed to **OPEN** the gripper, set the gripper position to 0.0. "
                 "If you are **EXPLICITLY** instructed to **GRAB** an object, set the gripper position to 0.2. "
