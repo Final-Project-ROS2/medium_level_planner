@@ -20,6 +20,7 @@ Motion/action tools preserved:
 
 """
 import os
+import re
 import threading
 import time
 from typing import List, Dict, Any
@@ -892,6 +893,84 @@ class Ros2LLMAgentNode(Node):
 
         tools.append(find_object)
 
+        @tool
+        def move_to_object(object_name: str) -> str:
+            """
+            Look up an object's position with find_object then move there preserving current orientation.
+            """
+            tool_name = "move_to_object"
+            with self._tools_called_lock:
+                self._tools_called.append(tool_name)
+
+            try:
+                find_result = find_object(object_name)
+                if "not found" in find_result.lower() or "failed" in find_result.lower():
+                    return f"move_to_object aborted: {find_result}"
+
+                pos_match = re.search(r"x=([-0-9.eE]+).*y=([-0-9.eE]+).*z=([-0-9.eE]+)", find_result)
+                if not pos_match:
+                    return f"Could not parse object position from: {find_result}"
+                pos_x, pos_y, pos_z = map(float, pos_match.groups())
+
+                pose_result = get_current_pose()
+                ori_match = re.search(
+                    r"orientation.*x:\s*([-0-9.eE]+).*y:\s*([-0-9.eE]+).*z:\s*([-0-9.eE]+).*w:\s*([-0-9.eE]+)",
+                    pose_result,
+                    re.DOTALL,
+                )
+
+                if ori_match:
+                    rot_x, rot_y, rot_z, rot_w = map(float, ori_match.groups())
+                else:
+                    fallback_pose = REAL_READY_POSE if self.real_hardware else SIM_READY_POSE
+                    rot_x = fallback_pose.orientation.x
+                    rot_y = fallback_pose.orientation.y
+                    rot_z = fallback_pose.orientation.z
+                    rot_w = fallback_pose.orientation.w
+
+                return move_linear_to_pose(pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w)
+            except Exception as e:
+                return f"ERROR in {tool_name}: {e}"
+
+        tools.append(move_to_object)
+
+        @tool
+        def pickup_object(object_name: str) -> str:
+            """
+            Move to ready, open gripper, go to the object, descend slightly, then close the gripper.
+            """
+            tool_name = "pickup_object"
+            with self._tools_called_lock:
+                self._tools_called.append(tool_name)
+
+            try:
+                sequence = []
+
+                sequence.append(move_to_ready())
+
+                if self.real_hardware:
+                    sequence.append(close_gripper(False))
+                else:
+                    sequence.append(set_gripper_position(0.0, 0.01))
+
+                move_result = move_to_object(object_name)
+                sequence.append(move_result)
+                if "success=False" in move_result or "aborted" in move_result:
+                    return "; ".join(sequence)
+
+                sequence.append(move_relative(0.0, 0.0, -0.05, 0.0, 0.0, 0.0))
+
+                if self.real_hardware:
+                    sequence.append(close_gripper(True))
+                else:
+                    sequence.append(set_gripper_position(0.8, 0.01))
+
+                return "; ".join(sequence)
+            except Exception as e:
+                return f"ERROR in {tool_name}: {e}"
+
+        tools.append(pickup_object)
+
         return tools
 
     # -----------------------
@@ -905,12 +984,10 @@ class Ros2LLMAgentNode(Node):
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
                 "query sensors, perceive the environment, or command the robot: get_current_pose, get_joint_angles, "
-                "move_linear_to_pose, set_gripper_position, move_relative, move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, find_object"
-                f"home is at {REAL_HOME_POSE}, ready is at {REAL_READY_POSE}, handover is at {REAL_HANDOVER_POSE}.\n"
+                "move_linear_to_pose, set_gripper_position, move_relative, move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, find_object, move_to_object, pickup_object. "
+                f"Home is at {REAL_HOME_POSE}, ready is at {REAL_READY_POSE}, handover is at {REAL_HANDOVER_POSE}.\n"
                 # "detect_objects, classify_all, classify_bb, detect_grasp, detect_grasp_bb, understand_scene.\n"
-                "If you are instructed to move to an object, use find_object to get its (x, y, z) position, then use move_linear_to_pose to go there, keeping all orienation the same.\n"
                 "If you are instructed to move a certain direction (e.g., UP, DOWN, FORWARD, BACKWARD, LEFT, RIGHT), use the move_relative tool with small increments (e.g., 0.05m).\n"
-                "If you are instructed to pick up an object, make sure your at ready, open the gripper first, move to the object, move down, then close the gripper.\n"
                 "If you are instructed to move to position you don't know, make reasonable assumptions, DO NOT ask for clarification.\n"
                 "When you choose to use a tool, call it with appropriate arguments (if any). "
                 "Return a final, concise, actionable response after using tools.\n"
@@ -928,16 +1005,14 @@ class Ros2LLMAgentNode(Node):
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
                 "query sensors, perceive the environment, or command the robot: get_current_pose, get_joint_angles, "
-                "move_linear_to_pose, set_gripper_position, move_relative, move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, find_object"
-                f"home is at {SIM_HOME_POSE}, ready is at {SIM_READY_POSE}, handover is at {SIM_HANDOVER_POSE}.\n"
+                "move_linear_to_pose, set_gripper_position, move_relative, move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, find_object, move_to_object, pickup_object. "
+                f"Home is at {SIM_HOME_POSE}, ready is at {SIM_READY_POSE}, handover is at {SIM_HANDOVER_POSE}.\n"
                 # "detect_objects, classify_all, classify_bb, detect_grasp, detect_grasp_bb, understand_scene.\n"
                 "If you are **EXPLICITLY** instructed to **OPEN** the gripper, set the gripper position to 0.0. "
                 "If you are **EXPLICITLY** instructed to **GRAB** an object, set the gripper position to 0.2. "
                 "If you are **EXPLICITLY** instructed to **CLOSE** the gripper, set the gripper position to 0.8. "
                 "If you are **EXPLICITLY** instructed to **RELEASE** an object, set the gripper position to 0.0. Always set max_effort to 0.01.\n"
-                "If you are instructed to move to an object, use find_object to get its (x, y, z) position, then use move_linear_to_pose to go there, keeping all orientation the same.\n"
                 "If you are instructed to move a certain direction (e.g., UP, DOWN, FORWARD, BACKWARD, LEFT, RIGHT), use the move_relative tool with small increments (e.g., 0.1m).\n"
-                "If you are instructed to pick up an object, make sure your at ready, open the gripper first, move to the object, move down, then close the gripper.\n"
                 "If you are instructed to move to position you don't know, make reasonable assumptions, DO NOT ask for clarification.\n"
                 "When you choose to use a tool, call it with appropriate arguments (if any). "
                 "Return a final, concise, actionable response after using tools.\n"
