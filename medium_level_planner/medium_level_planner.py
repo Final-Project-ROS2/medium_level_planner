@@ -149,7 +149,8 @@ class Ros2LLMAgentNode(Node):
             self.get_logger().info("Running in SIMULATION mode.")
         self.declare_parameter("use_ollama", False)
         self.use_ollama: bool = self.get_parameter("use_ollama").get_parameter_value().bool_value
-
+        self.declare_parameter("ollama_model", "qwen3:8b")
+        self.ollama_model: str = self.get_parameter("ollama_model").get_parameter_value().string_value
 
         # -----------------------------
         # LLM Selection: Gemini or Ollama
@@ -158,7 +159,7 @@ class Ros2LLMAgentNode(Node):
             self.get_logger().info("Using local LLM via Ollama.")
             # Example: using llama3.1 or any model installed in `ollama list`
             self.llm = ChatOllama(
-                model="gpt-oss:20b",   # <--- change to any local model you want
+                model=self.ollama_model,   # <--- change to any local model you want
                 temperature=0.0
             )
         else:
