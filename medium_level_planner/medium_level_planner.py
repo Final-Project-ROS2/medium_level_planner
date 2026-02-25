@@ -233,7 +233,7 @@ class Ros2LLMAgentNode(Node):
         value: True/False
         Returns True if successful, False otherwise.
         """
-        self.get_logger().info(f"[set_robot_state] Setting {state_name} to {value}")
+        # self.get_logger().info(f"[set_robot_state] Setting {state_name} to {value}")
         client_map = {
             "is_home": self.is_home_client,
             "is_ready": self.is_ready_client,
@@ -256,7 +256,7 @@ class Ros2LLMAgentNode(Node):
             rclpy.spin_until_future_complete(self, future)
             response = future.result()
             if response.success:
-                self.get_logger().info(f"Set {state_name} to {value}")
+                # self.get_logger().info(f"Set {state_name} to {value}")
                 return True
             else:
                 self.get_logger().error(f"Failed to set {state_name}: {response.message}")
@@ -439,6 +439,7 @@ class Ros2LLMAgentNode(Node):
         return None
 
     def _get_current_pose(self) -> str:
+        self.get_logger().info("[_get_current_pose] Fetching current pose")
         pose = self._fetch_current_pose()
         if pose is None:
             return "Failed to get current pose"
@@ -705,6 +706,7 @@ class Ros2LLMAgentNode(Node):
             Move to a position above the target, then opening the gripper.
             """
             tool_name = "place_at"
+            self.get_logger().info(f"[place_at] Placing object at ({x:.3f}, {y:.3f}, {z:.3f})")
             with self._tools_called_lock:
                 self._tools_called.append(tool_name)
 
@@ -738,6 +740,7 @@ class Ros2LLMAgentNode(Node):
             """
             Move to ready, open gripper, go to the object, descend slightly, then close the gripper.
             """
+            self.get_logger().info(f"[pickup_object] Picking up {object_name}")
             tool_name = "pickup_object"
             with self._tools_called_lock:
                 self._tools_called.append(tool_name)
