@@ -547,12 +547,13 @@ class Ros2LLMAgentNode(Node):
         @tool
         def get_current_pose() -> str:
             """Returns the current robot's end-effector pose relative to base_link."""
+            tool_name = "get_current_pose"
             with self._tools_called_lock:
-                self._tools_called.append("get_current_pose")
+                self._tools_called.append(tool_name)
             try:
                 return self._get_current_pose()
             except Exception as e:
-                return f"ERROR in get_current_pose: {e}"
+                return f"ERROR in {tool_name}: {e}"
 
         tools.append(get_current_pose)
 
@@ -560,12 +561,13 @@ class Ros2LLMAgentNode(Node):
         def move_linear_to_pose(pos_x: float, pos_y: float, pos_z: float,
                                 rot_x: float, rot_y: float, rot_z: float, rot_w: float) -> str:
             """Move robot to a target pose using quaternion orientation."""
+            tool_name = "move_linear_to_pose"
             with self._tools_called_lock:
-                self._tools_called.append("move_linear_to_pose")
+                self._tools_called.append(tool_name)
             try:
                 return self._move_linear_to_pose(pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w)
             except Exception as e:
-                return f"ERROR in move_linear_to_pose: {e}"
+                return f"ERROR in {tool_name}: {e}"
 
         tools.append(move_linear_to_pose)
 
@@ -574,24 +576,26 @@ class Ros2LLMAgentNode(Node):
             """
             Move robot to a predefined home pose.
             """
+            tool_name = "move_to_home"
             with self._tools_called_lock:
-                self._tools_called.append("move_to_home")
+                self._tools_called.append(tool_name)
             try:
                 return self._move_to_home()
             except Exception as e:
-                return f"ERROR in move_to_home: {e}"
+                return f"ERROR in {tool_name}: {e}"
 
         tools.append(move_to_home)
 
         @tool
         def move_to_ready() -> str:
             """Move robot to a predefined ready pose."""
+            tool_name = "move_to_ready"
             with self._tools_called_lock:
-                self._tools_called.append("move_to_ready")
+                self._tools_called.append(tool_name)
             try:
                 return self._move_to_ready()
             except Exception as e:
-                return f"ERROR in move_to_ready: {e}"
+                return f"ERROR in {tool_name}: {e}"
 
         tools.append(move_to_ready)
 
@@ -600,13 +604,14 @@ class Ros2LLMAgentNode(Node):
             """
             Move robot to a predefined ready pose.
             """
+            tool_name = "move_to_handover"
             with self._tools_called_lock:
-                self._tools_called.append("move_to_handover")
+                self._tools_called.append(tool_name)
 
             try:
                 return self._move_to_handover()
             except Exception as e:
-                return f"ERROR in move_to_handover: {e}"
+                return f"ERROR in {tool_name}: {e}"
         
         tools.append(move_to_handover)
 
@@ -615,47 +620,51 @@ class Ros2LLMAgentNode(Node):
             """
             Orient the gripper to face downwards.
             """
+            tool_name = "orient_gripper_down"
             with self._tools_called_lock:
-                self._tools_called.append("orient_gripper_down")
+                self._tools_called.append(tool_name)
             try:
                 return self._orient_gripper_down()
             except Exception as e:
-                return f"ERROR in orient_gripper_down: {e}"
+                return f"ERROR in {tool_name}: {e}"
         tools.append(orient_gripper_down)
 
         if self.real_hardware:
             @tool
             def close_gripper(close: bool) -> str:
+                tool_name = "close_gripper"
                 """Close or open the gripper (real hardware)."""
                 with self._tools_called_lock:
-                    self._tools_called.append("close_gripper")
+                    self._tools_called.append(tool_name)
                 try:
                     return self._close_gripper(close)
                 except Exception as e:
-                    return f"ERROR in close_gripper: {e}"
+                    return f"ERROR in {tool_name}: {e}"
             tools.append(close_gripper)
         else:
             @tool
             def set_gripper_position(position: float, max_effort: float) -> str:
                 """Set the gripper to a specific position. 0.0=open, 0.8=closed."""
+                tool_name = "set_gripper_position"
                 with self._tools_called_lock:
-                    self._tools_called.append("set_gripper_position")
+                    self._tools_called.append(tool_name)
                 try:
                     return self._set_gripper_position(position, max_effort)
                 except Exception as e:
-                    return f"ERROR in set_gripper_position: {e}"
+                    return f"ERROR in {tool_name}: {e}"
             tools.append(set_gripper_position)
 
         @tool
         def move_relative(dx: float, dy: float, dz: float,
                         roll: float, pitch: float, yaw: float) -> str:
             """Moves the robot end-effector relative to its current pose."""
+            tool_name = "move_relative"
             with self._tools_called_lock:
-                self._tools_called.append("move_relative")
+                self._tools_called.append(tool_name)
             try:
                 return self._move_relative(dx, dy, dz, roll, pitch, yaw)
             except Exception as e:
-                return f"ERROR in move_relative: {e}"
+                return f"ERROR in {tool_name}: {e}"
 
         tools.append(move_relative)
 
@@ -664,12 +673,13 @@ class Ros2LLMAgentNode(Node):
             """
             Call /find_object which returns the position of the specified object.
             """
+            tool_name = "find_object"
             with self._tools_called_lock:
-                self._tools_called.append("find_object")
+                self._tools_called.append(tool_name)
             try:
                 return self._find_object(object_name)
             except Exception as e:
-                return f"ERROR in find_object: {e}"
+                return f"ERROR in {tool_name}: {e}"
 
         tools.append(find_object)
 
@@ -678,13 +688,14 @@ class Ros2LLMAgentNode(Node):
             """
             Look up an object's position with find_object then move there preserving current orientation.
             """
+            tool_name = "move_to_object"
             with self._tools_called_lock:
-                self._tools_called.append("move_to_object")
+                self._tools_called.append(tool_name)
 
             try:
                 return self._move_to_object(object_name)
             except Exception as e:
-                return f"ERROR in move_to_object: {e}"
+                return f"ERROR in {tool_name}: {e}"
 
         tools.append(move_to_object)
 
@@ -693,8 +704,9 @@ class Ros2LLMAgentNode(Node):
             """
             Move to a position above the target, then opening the gripper.
             """
+            tool_name = "place_at"
             with self._tools_called_lock:
-                self._tools_called.append("place_at")
+                self._tools_called.append(tool_name)
 
             try:
                 # Move to the target
@@ -717,7 +729,7 @@ class Ros2LLMAgentNode(Node):
                 return f"Successfully placed at ({x:.3f}, {y:.3f}, {z:.3f})"
 
             except Exception as e:
-                return f"ERROR in place_at: {e}"
+                return f"ERROR in {tool_name}: {e}"
         
         tools.append(place_at)
 
