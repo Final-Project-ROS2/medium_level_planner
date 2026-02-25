@@ -137,6 +137,9 @@ REAL_ORIENT_DOWN_POSE.orientation.y = 0.0
 REAL_ORIENT_DOWN_POSE.orientation.z = 0.0
 REAL_ORIENT_DOWN_POSE.orientation.w = 0.00
 
+# Composite tools delay time
+TOOL_DELAY = 5.0
+
 class Ros2LLMAgentNode(Node):
     def __init__(self):
         super().__init__("ros2_llm_agent")
@@ -410,7 +413,10 @@ class Ros2LLMAgentNode(Node):
         x, y, z = resp.x, resp.y, resp.z
         if x is None or y is None or z is None:
             return f"{object_name} not found in the scene."
-        return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={z:.3f}."
+        if self.real_hardware:
+            return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={REAL_READY_POSE.position.z:.3f}"
+        else:
+            return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={SIM_READY_POSE.position.z:.3f}"
 
     def _fetch_current_pose(self) -> Optional[Pose]:
         self.get_logger().info("[_fetch_current_pose] Requesting current pose")
@@ -696,6 +702,8 @@ class Ros2LLMAgentNode(Node):
                 if "success=False" in move_to_result:
                     return f"Failed to move to target: {move_to_result}"
 
+                time.sleep(TOOL_DELAY)
+
                 # Open gripper
                 if self.real_hardware:
                     open_gripper_result = self._close_gripper(False)
@@ -703,6 +711,8 @@ class Ros2LLMAgentNode(Node):
                     open_gripper_result = self._set_gripper_position(0.0, 0.1)
                 if "success=False" in open_gripper_result:
                     return f"Failed to open gripper: {open_gripper_result}"
+
+                time.sleep(TOOL_DELAY)
 
                 return f"Successfully placed at ({x:.3f}, {y:.3f}, {z:.3f})"
 
@@ -726,19 +736,27 @@ class Ros2LLMAgentNode(Node):
                 move_to_ready_result = self._move_to_ready()
                 sequence.append(move_to_ready_result)
 
+                time.sleep(TOOL_DELAY)
+
                 if self.real_hardware:
                     open_gripper_result = self._close_gripper(False)
                 else:
                     open_gripper_result = self._set_gripper_position(0.0, 0.01)
                 sequence.append(open_gripper_result)
 
+                time.sleep(TOOL_DELAY)
+
                 move_result = self._move_to_object(object_name)
                 sequence.append(move_result)
                 if "success=False" in move_result or "aborted" in move_result:
                     return "; ".join(sequence)
 
-                move_down_result = self._move_relative(0.0, 0.0, -0.05, 0.0, 0.0, 0.0)
+                time.sleep(TOOL_DELAY)
+
+                move_down_result = self._move_relative(0.0, 0.0, -0.01, 0.0, 0.0, 0.0)
                 sequence.append(move_down_result)
+
+                time.sleep(TOOL_DELAY)
 
                 if self.real_hardware:
                     close_gripper_result = self._close_gripper(True)
@@ -746,10 +764,12 @@ class Ros2LLMAgentNode(Node):
                     close_gripper_result = self._set_gripper_position(0.8, 0.01)
                 sequence.append(close_gripper_result)
 
-                move_up_result = self._move_relative(0.0, 0.0, 0.05, 0.0, 0.0, 0.0)
+                time.sleep(TOOL_DELAY)
+
+                move_up_result = self._move_relative(0.0, 0.0, 0.01, 0.0, 0.0, 0.0)
                 sequence.append(move_up_result)
 
-                return "; ".join(sequence)
+                return f"Successfully picked up {object_name}"
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
 
@@ -767,10 +787,10 @@ class Ros2LLMAgentNode(Node):
         if self.real_hardware:
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
-                "query sensors, perceive the environment, or command the robot: get_current_pose, get_joint_angles, "
-                "move_linear_to_pose, set_gripper_position, move_relative, move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, find_object, move_to_object, pickup_object. "
+                "query sensors, perceive the environment, or command the robot: get_current_pose, move_linear_to_pose, set_gripper_position, move_relative,"
+                "move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, find_object, move_to_object, pickup_object. "
+                "try to use as few tools as possible to accomplish the task.\n"
                 f"Home is at {REAL_HOME_POSE}, ready is at {REAL_READY_POSE}, handover is at {REAL_HANDOVER_POSE}.\n"
-                # "detect_objects, classify_all, classify_bb, detect_grasp, detect_grasp_bb, understand_scene.\n"
                 "If you are instructed to move a certain direction (e.g., UP, DOWN, FORWARD, BACKWARD, LEFT, RIGHT), use the move_relative tool with small increments (e.g., 0.05m).\n"
                 "If you are instructed to move to position you don't know, make reasonable assumptions, DO NOT ask for clarification.\n"
                 "When you choose to use a tool, call it with appropriate arguments (if any). "
@@ -780,18 +800,14 @@ class Ros2LLMAgentNode(Node):
                 "- The direction up is along positive Z axis, down is along negative Z axis.\n"
                 "- The direction forward is along negative Y axis, backward is along positive Y axis.\n"
                 "- The direction left is along positive X axis, right is along negative X axis.\n"
-                "- The human operator you are assisting is to your right side (negative X direction).\n"
-                "- You can spin/twist the gripper by using move_relative with yaw adjustments.\n"
-                "- Use vision tools (detect_objects/classify_bb/detect_grasp_bb) to perceive which object to manipulate.\n"
-                "- For bbox-based tools, provide integer pixel coordinates [x1,y1,x2,y2].\n"
             )
         else:
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
-                "query sensors, perceive the environment, or command the robot: get_current_pose, get_joint_angles, "
-                "move_linear_to_pose, set_gripper_position, move_relative, move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, find_object, move_to_object, pickup_object. "
+                "query sensors, perceive the environment, or command the robot: get_current_pose, move_linear_to_pose, set_gripper_position, move_relative,"
+                "move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, find_object, move_to_object, pickup_object. "
+                "try to use as few tools as possible to accomplish the task.\n"
                 f"Home is at {SIM_HOME_POSE}, ready is at {SIM_READY_POSE}, handover is at {SIM_HANDOVER_POSE}.\n"
-                # "detect_objects, classify_all, classify_bb, detect_grasp, detect_grasp_bb, understand_scene.\n"
                 "If you are **EXPLICITLY** instructed to **OPEN** the gripper, set the gripper position to 0.0. "
                 "If you are **EXPLICITLY** instructed to **GRAB** an object, set the gripper position to 0.2. "
                 "If you are **EXPLICITLY** instructed to **CLOSE** the gripper, set the gripper position to 0.8. "
@@ -806,10 +822,6 @@ class Ros2LLMAgentNode(Node):
                 "- The direction up is along positive Z axis, down is along negative Z axis.\n"
                 "- The direction forward is along positive X axis, backward is along negative X axis.\n"
                 "- The direction left is along positive Y axis, right is along negative Y axis.\n"
-                "- The human operator you are assisting is to your right side (negative Y direction).\n"
-                "- You can spin/twist the gripper by using move_relative with yaw adjustments.\n"
-                "- Use vision tools (detect_objects/classify_bb/detect_grasp_bb) to perceive which object to manipulate.\n"
-                "- For bbox-based tools, provide integer pixel coordinates [x1,y1,x2,y2].\n"
             )
 
         prompt = ChatPromptTemplate.from_messages(
