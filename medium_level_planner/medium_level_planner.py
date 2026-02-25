@@ -23,7 +23,7 @@ import os
 import re
 import threading
 import time
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 import rclpy
 from rclpy.node import Node
@@ -137,6 +137,9 @@ REAL_ORIENT_DOWN_POSE.orientation.y = 0.0
 REAL_ORIENT_DOWN_POSE.orientation.z = 0.0
 REAL_ORIENT_DOWN_POSE.orientation.w = 0.00
 
+# Composite tools delay time
+TOOL_DELAY = 5.0
+
 class Ros2LLMAgentNode(Node):
     def __init__(self):
         super().__init__("ros2_llm_agent")
@@ -230,6 +233,7 @@ class Ros2LLMAgentNode(Node):
         value: True/False
         Returns True if successful, False otherwise.
         """
+        # self.get_logger().info(f"[set_robot_state] Setting {state_name} to {value}")
         client_map = {
             "is_home": self.is_home_client,
             "is_ready": self.is_ready_client,
@@ -252,7 +256,7 @@ class Ros2LLMAgentNode(Node):
             rclpy.spin_until_future_complete(self, future)
             response = future.result()
             if response.success:
-                self.get_logger().info(f"Set {state_name} to {value}")
+                # self.get_logger().info(f"Set {state_name} to {value}")
                 return True
             else:
                 self.get_logger().error(f"Failed to set {state_name}: {response.message}")
@@ -260,6 +264,273 @@ class Ros2LLMAgentNode(Node):
         except Exception as e:
             self.get_logger().error(f"ERROR in set_robot_state for {state_name}: {e}")
             return False
+    
+    # -----------------------
+    # Reusable Tools
+    # -----------------------
+
+    # In your Ros2LLMAgentNode class, add these private helper methods:
+
+    def _move_to_ready(self) -> str:
+        self.get_logger().info("[_move_to_ready] Moving to ready pose")
+        ready_pose = SIM_READY_POSE if not self.real_hardware else REAL_READY_POSE
+        goal = PlanComplexCartesianSteps.Goal()
+        goal.target_pose = ready_pose
+        if not self.move_action_client.wait_for_server(timeout_sec=5.0):
+            return "Move action server unavailable"
+        send_future = self.move_action_client.send_goal_async(goal)
+        rclpy.spin_until_future_complete(self, send_future)
+        goal_handle = send_future.result()
+        if not goal_handle.accepted:
+            return "Move action rejected"
+        result_future = goal_handle.get_result_async()
+        rclpy.spin_until_future_complete(self, result_future)
+        result = result_future.result().result
+        if result.success:
+            self.set_robot_state("is_home", False)
+            self.set_robot_state("is_ready", True)
+            self.set_robot_state("is_handover", False)
+        return f"move_to_ready result: success={result.success}"
+
+    def _move_to_home(self) -> str:
+        self.get_logger().info("[_move_to_home] Moving to home pose")
+        home_pose = SIM_HOME_POSE if not self.real_hardware else REAL_HOME_POSE
+
+        goal = PlanComplexCartesianSteps.Goal()
+        goal.target_pose = home_pose
+
+        if not self.move_action_client.wait_for_server(timeout_sec=5.0):
+            return "Move action server unavailable"
+        send_future = self.move_action_client.send_goal_async(goal)
+        rclpy.spin_until_future_complete(self, send_future)
+        goal_handle = send_future.result()
+        if not goal_handle.accepted:
+            return "Move action rejected"
+        result_future = goal_handle.get_result_async()
+        rclpy.spin_until_future_complete(self, result_future)
+        result = result_future.result().result
+        if result.success:
+            self.set_robot_state("is_home", True)
+            self.set_robot_state("is_ready", False)
+            self.set_robot_state("is_handover", False)
+        return f"move_to_home result: success={result.success}"
+    
+    def _move_to_handover(self) -> str:
+        self.get_logger().info("[_move_to_handover] Moving to handover pose")
+        handover_pose = SIM_HANDOVER_POSE if not self.real_hardware else REAL_HANDOVER_POSE
+
+        goal = PlanComplexCartesianSteps.Goal()
+        goal.target_pose = handover_pose
+
+        if not self.move_action_client.wait_for_server(timeout_sec=5.0):
+            return "Move action server unavailable"
+        send_future = self.move_action_client.send_goal_async(goal)
+        rclpy.spin_until_future_complete(self, send_future)
+        goal_handle = send_future.result()
+        if not goal_handle.accepted:
+            return "Move action rejected"
+        result_future = goal_handle.get_result_async()
+        rclpy.spin_until_future_complete(self, result_future)
+        result = result_future.result().result
+        if result.success:
+            self.set_robot_state("is_home", False)
+            self.set_robot_state("is_ready", False)
+            self.set_robot_state("is_handover", True)
+        return f"move_to_handover result: success={result.success}"
+    
+    def _orient_gripper_down(self) -> str:
+        self.get_logger().info("[_orient_gripper_down] Orienting gripper downward")
+        goal = PlanComplexCartesianSteps.Goal()
+        down_orientation = Pose()
+        down_orientation.orientation.x = -0.69
+        down_orientation.orientation.y = 0.72
+        down_orientation.orientation.z = 0.00
+        down_orientation.orientation.w = 0.00
+        goal.target_pose = down_orientation
+
+        if not self.move_action_client.wait_for_server(timeout_sec=5.0):
+            return "Move action server unavailable"
+        send_future = self.move_action_client.send_goal_async(goal)
+        rclpy.spin_until_future_complete(self, send_future)
+        goal_handle = send_future.result()
+        if not goal_handle.accepted:
+            return "Move action rejected"
+        result_future = goal_handle.get_result_async()
+        rclpy.spin_until_future_complete(self, result_future)
+        result = result_future.result().result
+        return f"orient_gripper_down result: success={result.success}"
+
+    def _set_gripper_position(self, position: float, max_effort: float) -> str:
+        self.get_logger().info(f"[_set_gripper_position] position={position}, max_effort={max_effort}")
+        if isinstance(self.gripper_client, ActionClient):
+            goal = GripperCommand.Goal()
+            goal.command.position = position
+            goal.command.max_effort = max_effort
+            if not self.gripper_client.wait_for_server(timeout_sec=5.0):
+                return "Gripper action server unavailable"
+            send_future = self.gripper_client.send_goal_async(goal)
+            rclpy.spin_until_future_complete(self, send_future)
+            goal_handle = send_future.result()
+            if not goal_handle.accepted:
+                return "Gripper action rejected"
+            result_future = goal_handle.get_result_async()
+            rclpy.spin_until_future_complete(self, result_future)
+            result = result_future.result().result
+            if result.reached_goal:
+                self.set_robot_state("gripper_is_open", position == 0.0)
+            return f"set_gripper_position result: success={getattr(result, 'reached_goal', False)}"
+        return "set_gripper_position not available for real hardware"
+
+    def _close_gripper(self, close: bool) -> str:
+        self.get_logger().info(f"[_close_gripper] close={close}")
+        if isinstance(self.gripper_client, ActionClient):
+            return "close_gripper is not available in simulation mode."
+        if not self.gripper_client.wait_for_service(timeout_sec=5.0):
+            return "Gripper service /control_gripper unavailable"
+        request = SetBool.Request()
+        request.data = close
+        future = self.gripper_client.call_async(request)
+        rclpy.spin_until_future_complete(self, future)
+        response = future.result()
+        if response.success:
+            self.set_robot_state("gripper_is_open", not close)
+            return f"Gripper successfully {'closed' if close else 'opened'}."
+        return f"Failed to {'close' if close else 'open'} gripper: {response.message}"
+
+    def _find_object(self, object_name: str) -> str:
+        self.get_logger().info(f"[_find_object] Searching for {object_name}")
+        if not self.find_object_client.wait_for_service(timeout_sec=5.0):
+            return "Service /find_object unavailable"
+        req = FindObjectReal.Request()
+        req.label = object_name
+        future = self.find_object_client.call_async(req)
+        rclpy.spin_until_future_complete(self, future)
+        resp = future.result()
+        if resp is None:
+            return "No response from /find_object"
+        if not resp.success:
+            return f"find_object failed: {resp.error_message or 'unknown'}"
+        x, y, z = resp.x, resp.y, resp.z
+        if x is None or y is None or z is None:
+            return f"{object_name} not found in the scene."
+        if self.real_hardware:
+            return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={REAL_READY_POSE.position.z:.3f}"
+        else:
+            return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={SIM_READY_POSE.position.z:.3f}"
+
+    def _fetch_current_pose(self) -> Optional[Pose]:
+        self.get_logger().info("[_fetch_current_pose] Requesting current pose")
+        if not self.pose_action_client.wait_for_server(timeout_sec=5.0):
+            self.get_logger().error("[_fetch_current_pose] /get_current_pose unavailable")
+            return None
+        goal = GetCurrentPose.Goal()
+        send_future = self.pose_action_client.send_goal_async(goal)
+        rclpy.spin_until_future_complete(self, send_future)
+        goal_handle = send_future.result()
+        if not goal_handle.accepted:
+            self.get_logger().error("[_fetch_current_pose] Goal rejected")
+            return None
+        result_future = goal_handle.get_result_async()
+        rclpy.spin_until_future_complete(self, result_future)
+        result = result_future.result().result
+        if result.success:
+            return result.pose
+        self.get_logger().error("[_fetch_current_pose] Failed to fetch pose")
+        return None
+
+    def _get_current_pose(self) -> str:
+        self.get_logger().info("[_get_current_pose] Fetching current pose")
+        pose = self._fetch_current_pose()
+        if pose is None:
+            return "Failed to get current pose"
+        return f"pose: {pose}"
+
+    def _move_linear_to_pose(self, pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w) -> str:
+        self.get_logger().info(
+            f"[_move_linear_to_pose] target=({pos_x}, {pos_y}, {pos_z}), "
+            f"orientation=({rot_x}, {rot_y}, {rot_z}, {rot_w})"
+        )
+        goal = PlanComplexCartesianSteps.Goal()
+        pose = Pose()
+        pose.position.x = pos_x
+        pose.position.y = pos_y
+        pose.position.z = pos_z
+        pose.orientation.x = rot_x
+        pose.orientation.y = rot_y
+        pose.orientation.z = rot_z
+        pose.orientation.w = rot_w
+        goal.target_pose = pose
+        if not self.move_action_client.wait_for_server(timeout_sec=5.0):
+            return "Move action server unavailable"
+        send_future = self.move_action_client.send_goal_async(goal)
+        rclpy.spin_until_future_complete(self, send_future)
+        goal_handle = send_future.result()
+        if not goal_handle.accepted:
+            return "Move action rejected"
+        result_future = goal_handle.get_result_async()
+        rclpy.spin_until_future_complete(self, result_future)
+        result = result_future.result().result
+        if result.success:
+            self.set_robot_state("is_home", False)
+            self.set_robot_state("is_ready", False)
+            self.set_robot_state("is_handover", False)
+        return f"move_to_pose result: success={result.success}"
+
+    def _move_relative(self, dx, dy, dz, roll, pitch, yaw) -> str:
+        self.get_logger().info(
+            f"[_move_relative] dx={dx}, dy={dy}, dz={dz}, roll={roll}, pitch={pitch}, yaw={yaw}"
+        )
+        if not self.relative_action_client.wait_for_server(timeout_sec=5.0):
+            return "Action server /plan_cartesian_relative unavailable."
+        goal_msg = MoveitRelative.Goal()
+        goal_msg.distance_x = dx
+        goal_msg.distance_y = dy
+        goal_msg.distance_z = dz
+        goal_msg.roll = roll
+        goal_msg.pitch = pitch
+        goal_msg.yaw = yaw
+        send_goal_future = self.relative_action_client.send_goal_async(goal_msg)
+        rclpy.spin_until_future_complete(self, send_goal_future)
+        goal_handle = send_goal_future.result()
+        if not goal_handle.accepted:
+            return "Relative motion goal rejected by action server."
+        result_future = goal_handle.get_result_async()
+        rclpy.spin_until_future_complete(self, result_future)
+        result = result_future.result().result
+        if result.success:
+            self.set_robot_state("is_home", False)
+            self.set_robot_state("is_ready", False)
+            self.set_robot_state("is_handover", False)
+            return (f"Relative motion executed successfully: "
+                    f"Δx={dx:.3f}, Δy={dy:.3f}, Δz={dz:.3f}, "
+                    f"roll={roll:.3f}, pitch={pitch:.3f}, yaw={yaw:.3f}")
+        return "Cartesian path planning or execution failed."
+
+    def _move_to_object(self, object_name: str) -> str:
+        self.get_logger().info(f"[_move_to_object] Moving to object '{object_name}'")
+        find_result = self._find_object(object_name)
+        if "not found" in find_result.lower() or "failed" in find_result.lower():
+            return f"move_to_object aborted: {find_result}"
+
+        pos_match = re.search(r"x=([-0-9.eE]+).*y=([-0-9.eE]+).*z=([-0-9.eE]+)", find_result)
+        if not pos_match:
+            return f"Could not parse object position from: {find_result}"
+        pos_x, pos_y, pos_z = map(float, pos_match.groups())
+
+        current_pose = self._fetch_current_pose()
+        if current_pose is not None:
+            rot_x = current_pose.orientation.x
+            rot_y = current_pose.orientation.y
+            rot_z = current_pose.orientation.z
+            rot_w = current_pose.orientation.w
+        else:
+            fallback_pose = REAL_READY_POSE if self.real_hardware else SIM_READY_POSE
+            rot_x = fallback_pose.orientation.x
+            rot_y = fallback_pose.orientation.y
+            rot_z = fallback_pose.orientation.z
+            rot_w = fallback_pose.orientation.w
+
+        return self._move_linear_to_pose(pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w)
 
     # -----------------------
     # Tool wrappers (LangChain)
@@ -276,96 +547,26 @@ class Ros2LLMAgentNode(Node):
 
         @tool
         def get_current_pose() -> str:
-            """Returns the current robot's end-effector pose relative to base_link using an action call."""
+            """Returns the current robot's end-effector pose relative to base_link."""
             tool_name = "get_current_pose"
             with self._tools_called_lock:
                 self._tools_called.append(tool_name)
-
             try:
-                if not self.pose_action_client.wait_for_server(timeout_sec=5.0):
-                    return "Action server /get_current_pose unavailable"
-                goal = GetCurrentPose.Goal()
-                send_future = self.pose_action_client.send_goal_async(goal)
-                rclpy.spin_until_future_complete(self, send_future)
-                goal_handle = send_future.result()
-                if not goal_handle.accepted:
-                    return "Action goal rejected for /get_current_pose"
-                result_future = goal_handle.get_result_async()
-                rclpy.spin_until_future_complete(self, result_future)
-                result = result_future.result().result
-                if result.success:
-                    return f"pose: {result.pose}"
-                else:
-                    return "Failed to get current pose"
+                return self._get_current_pose()
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
 
         tools.append(get_current_pose)
 
         @tool
-        def get_joint_angles() -> str:
-            """Returns a textual representation of all joint angles using an action call."""
-            tool_name = "get_joint_angles"
-            with self._tools_called_lock:
-                self._tools_called.append(tool_name)
-
-            try:
-                if not self.joint_action_client.wait_for_server(timeout_sec=5.0):
-                    return "Action server /get_joint_angles unavailable"
-                goal = GetJointAngles.Goal()
-                send_future = self.joint_action_client.send_goal_async(goal)
-                rclpy.spin_until_future_complete(self, send_future)
-                goal_handle = send_future.result()
-                if not goal_handle.accepted:
-                    return "Action goal rejected for /get_joint_angles"
-                result_future = goal_handle.get_result_async()
-                rclpy.spin_until_future_complete(self, result_future)
-                result = result_future.result().result
-                if result.success:
-                    return f"joints: {result.joint_positions}"
-                else:
-                    return "Failed to get joint angles"
-            except Exception as e:
-                return f"ERROR in {tool_name}: {e}"
-
-        tools.append(get_joint_angles)
-
-        @tool
         def move_linear_to_pose(pos_x: float, pos_y: float, pos_z: float,
                                 rot_x: float, rot_y: float, rot_z: float, rot_w: float) -> str:
-            """
-            Move robot to a target pose using Roll Pitch Yaw orientation
-            """
+            """Move robot to a target pose using quaternion orientation."""
             tool_name = "move_linear_to_pose"
             with self._tools_called_lock:
                 self._tools_called.append(tool_name)
-
             try:
-                goal = PlanComplexCartesianSteps.Goal()
-                pose = Pose()
-                pose.position.x = pos_x
-                pose.position.y = pos_y
-                pose.position.z = pos_z
-                pose.orientation.x = rot_x
-                pose.orientation.y = rot_y
-                pose.orientation.z = rot_z
-                pose.orientation.w = rot_w
-                goal.target_pose = pose
-                if not self.move_action_client.wait_for_server(timeout_sec=5.0):
-                    return "Move action server unavailable"
-                send_future = self.move_action_client.send_goal_async(goal)
-                rclpy.spin_until_future_complete(self, send_future)
-                goal_handle = send_future.result()
-                if not goal_handle.accepted:
-                    return "Move action rejected"
-                result_future = goal_handle.get_result_async()
-                rclpy.spin_until_future_complete(self, result_future)
-                result = result_future.result().result
-                if result.success:
-                    self.set_robot_state("is_home", False)
-                    self.set_robot_state("is_ready", False)
-                    self.set_robot_state("is_handover", False)
-                return f"move_to_pose result: success={result.success}"
+                return self._move_linear_to_pose(pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w)
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
 
@@ -379,28 +580,8 @@ class Ros2LLMAgentNode(Node):
             tool_name = "move_to_home"
             with self._tools_called_lock:
                 self._tools_called.append(tool_name)
-
             try:
-                home_pose = SIM_HOME_POSE if not self.real_hardware else REAL_HOME_POSE
-
-                goal = PlanComplexCartesianSteps.Goal()
-                goal.target_pose = home_pose
-
-                if not self.move_action_client.wait_for_server(timeout_sec=5.0):
-                    return "Move action server unavailable"
-                send_future = self.move_action_client.send_goal_async(goal)
-                rclpy.spin_until_future_complete(self, send_future)
-                goal_handle = send_future.result()
-                if not goal_handle.accepted:
-                    return "Move action rejected"
-                result_future = goal_handle.get_result_async()
-                rclpy.spin_until_future_complete(self, result_future)
-                result = result_future.result().result
-                if result.success:
-                    self.set_robot_state("is_home", True)
-                    self.set_robot_state("is_ready", False)
-                    self.set_robot_state("is_handover", False)
-                return f"move_to_home result: success={result.success}"
+                return self._move_to_home()
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
 
@@ -408,37 +589,15 @@ class Ros2LLMAgentNode(Node):
 
         @tool
         def move_to_ready() -> str:
-            """
-            Move robot to a predefined ready pose.
-            """
+            """Move robot to a predefined ready pose."""
             tool_name = "move_to_ready"
             with self._tools_called_lock:
                 self._tools_called.append(tool_name)
-
             try:
-                ready_pose = SIM_READY_POSE if not self.real_hardware else REAL_READY_POSE
-
-                goal = PlanComplexCartesianSteps.Goal()
-                goal.target_pose = ready_pose
-
-                if not self.move_action_client.wait_for_server(timeout_sec=5.0):
-                    return "Move action server unavailable"
-                send_future = self.move_action_client.send_goal_async(goal)
-                rclpy.spin_until_future_complete(self, send_future)
-                goal_handle = send_future.result()
-                if not goal_handle.accepted:
-                    return "Move action rejected"
-                result_future = goal_handle.get_result_async()
-                rclpy.spin_until_future_complete(self, result_future)
-                result = result_future.result().result
-                if result.success:
-                    self.set_robot_state("is_home", False)
-                    self.set_robot_state("is_ready", True)
-                    self.set_robot_state("is_handover", False)
-                return f"move_to_ready result: success={result.success}"
+                return self._move_to_ready()
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
-        
+
         tools.append(move_to_ready)
 
         @tool
@@ -451,26 +610,7 @@ class Ros2LLMAgentNode(Node):
                 self._tools_called.append(tool_name)
 
             try:
-                handover_pose = SIM_HANDOVER_POSE if not self.real_hardware else REAL_HANDOVER_POSE
-
-                goal = PlanComplexCartesianSteps.Goal()
-                goal.target_pose = handover_pose
-
-                if not self.move_action_client.wait_for_server(timeout_sec=5.0):
-                    return "Move action server unavailable"
-                send_future = self.move_action_client.send_goal_async(goal)
-                rclpy.spin_until_future_complete(self, send_future)
-                goal_handle = send_future.result()
-                if not goal_handle.accepted:
-                    return "Move action rejected"
-                result_future = goal_handle.get_result_async()
-                rclpy.spin_until_future_complete(self, result_future)
-                result = result_future.result().result
-                if result.success:
-                    self.set_robot_state("is_home", False)
-                    self.set_robot_state("is_ready", False)
-                    self.set_robot_state("is_handover", True)
-                return f"move_to_handover result: success={result.success}"
+                return self._move_to_handover()
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
         
@@ -484,383 +624,50 @@ class Ros2LLMAgentNode(Node):
             tool_name = "orient_gripper_down"
             with self._tools_called_lock:
                 self._tools_called.append(tool_name)
-
             try:
-                goal = PlanComplexCartesianSteps.Goal()
-                down_orientation = Pose()
-                down_orientation.orientation.x = -0.69
-                down_orientation.orientation.y = 0.72
-                down_orientation.orientation.z = 0.00
-                down_orientation.orientation.w = 0.00
-                goal.target_pose = down_orientation
-
-                if not self.move_action_client.wait_for_server(timeout_sec=5.0):
-                    return "Move action server unavailable"
-                send_future = self.move_action_client.send_goal_async(goal)
-                rclpy.spin_until_future_complete(self, send_future)
-                goal_handle = send_future.result()
-                if not goal_handle.accepted:
-                    return "Move action rejected"
-                result_future = goal_handle.get_result_async()
-                rclpy.spin_until_future_complete(self, result_future)
-                result = result_future.result().result
-                return f"orient_gripper_down result: success={result.success}"
+                return self._orient_gripper_down()
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
-
         tools.append(orient_gripper_down)
 
-        @tool
-        def set_gripper_position(position: float, max_effort: float) -> str:
-            """
-            Set the gripper to a specific position with given max effort.
-            position: 0.0 open ... 0.8 closed (example)
-            """
-            tool_name = "set_gripper_position"
-            with self._tools_called_lock:
-                self._tools_called.append(tool_name)
-
-            try:
-                # If real hardware, the gripper is a service (SetBool) — handled elsewhere.
-                if isinstance(self.gripper_client, ActionClient):
-                    # simulation path: Action-based gripper
-                    goal = GripperCommand.Goal()
-                    goal.command.position = position
-                    goal.command.max_effort = max_effort
-                    if not self.gripper_client.wait_for_server(timeout_sec=5.0):
-                        return "Gripper action server unavailable"
-                    send_future = self.gripper_client.send_goal_async(goal)
-                    rclpy.spin_until_future_complete(self, send_future)
-                    goal_handle = send_future.result()
-                    if not goal_handle.accepted:
-                        return "Gripper action rejected"
-                    result_future = goal_handle.get_result_async()
-                    rclpy.spin_until_future_complete(self, result_future)
-                    result = result_future.result().result
-                    if result.reached_goal:
-                        self.set_robot_state("gripper_is_open", position == 0.0)
-                    return f"set_gripper_position result: success={getattr(result, 'reached_goal', False)}"
-                else:
-                    return "set_gripper_position not available for real hardware; use close_gripper service instead"
-            except Exception as e:
-                return f"ERROR in {tool_name}: {e}"
-
-        # tools.append(set_gripper_position)
-
-        @tool
-        def close_gripper(close: bool) -> str:
-            """
-            Close or open the gripper using a service call (real hardware path).
-            """
-            tool_name = "close_gripper"
-            with self._tools_called_lock:
-                self._tools_called.append(tool_name)
-
-            try:
-                if isinstance(self.gripper_client, ActionClient):
-                    return "close_gripper is not available in simulation mode."
-                # real hardware: SetBool service
-                if not self.gripper_client.wait_for_service(timeout_sec=5.0):
-                    return "Gripper service /control_gripper unavailable"
-                request = SetBool.Request()
-                request.data = close
-                future = self.gripper_client.call_async(request)
-                rclpy.spin_until_future_complete(self, future)
-                response = future.result()
-                if response.success:
-                    action = "closed" if close else "opened"
-                    self.set_robot_state("gripper_is_open", not close)
-                    return f"Gripper successfully {action}."
-                else:
-                    return f"Failed to {'close' if close else 'open'} gripper: {response.message}"
-            except Exception as e:
-                return f"ERROR in {tool_name}: {e}"
-
         if self.real_hardware:
+            @tool
+            def close_gripper(close: bool) -> str:
+                tool_name = "close_gripper"
+                """Close or open the gripper (real hardware)."""
+                with self._tools_called_lock:
+                    self._tools_called.append(tool_name)
+                try:
+                    return self._close_gripper(close)
+                except Exception as e:
+                    return f"ERROR in {tool_name}: {e}"
             tools.append(close_gripper)
         else:
+            @tool
+            def set_gripper_position(position: float, max_effort: float) -> str:
+                """Set the gripper to a specific position. 0.0=open, 0.8=closed."""
+                tool_name = "set_gripper_position"
+                with self._tools_called_lock:
+                    self._tools_called.append(tool_name)
+                try:
+                    return self._set_gripper_position(position, max_effort)
+                except Exception as e:
+                    return f"ERROR in {tool_name}: {e}"
             tools.append(set_gripper_position)
 
         @tool
         def move_relative(dx: float, dy: float, dz: float,
-                          roll: float, pitch: float, yaw: float) -> str:
-            """
-            Moves the robot end-effector relative to its current pose using the MoveitRelative action.
-            """
+                        roll: float, pitch: float, yaw: float) -> str:
+            """Moves the robot end-effector relative to its current pose."""
             tool_name = "move_relative"
             with self._tools_called_lock:
                 self._tools_called.append(tool_name)
-
             try:
-                if not self.relative_action_client.wait_for_server(timeout_sec=5.0):
-                    return "Action server /plan_cartesian_relative unavailable."
-
-                goal_msg = MoveitRelative.Goal()
-                goal_msg.distance_x = dx
-                goal_msg.distance_y = dy
-                goal_msg.distance_z = dz
-                goal_msg.roll = roll
-                goal_msg.pitch = pitch
-                goal_msg.yaw = yaw
-
-                send_goal_future = self.relative_action_client.send_goal_async(goal_msg)
-                rclpy.spin_until_future_complete(self, send_goal_future)
-                goal_handle = send_goal_future.result()
-
-                if not goal_handle.accepted:
-                    return "Relative motion goal rejected by action server."
-
-                result_future = goal_handle.get_result_async()
-                rclpy.spin_until_future_complete(self, result_future)
-                result = result_future.result().result
-
-                if result.success:
-                    self.set_robot_state("is_home", False)
-                    self.set_robot_state("is_ready", False)
-                    self.set_robot_state("is_handover", False)
-                    return (f"✅ Relative motion executed successfully:\n"
-                            f"Δx={dx:.3f}, Δy={dy:.3f}, Δz={dz:.3f}, "
-                            f"roll={roll:.3f}, pitch={pitch:.3f}, yaw={yaw:.3f}")
-                else:
-                    return "❌ Cartesian path planning or execution failed."
-
+                return self._move_relative(dx, dy, dz, roll, pitch, yaw)
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
 
         tools.append(move_relative)
-
-        @tool
-        def place_at(x: float, y: float, z: float) -> str:
-            """
-            Move to a position above the target, then opening the gripper.
-            """
-            tool_name = "place_at"
-            with self._tools_called_lock:
-                self._tools_called.append(tool_name)
-
-            try:
-                # Move to the target
-                result1 = move_linear_to_pose(x, y, z, 0, 0, 0, 1)
-                if "success=False" in result1:
-                    return f"Failed to move to target: {result1}"
-
-                # Open gripper
-                result2 = open_gripper()
-                if "success=False" in result2:
-                    return f"Failed to open gripper: {result2}"
-
-                return f"Successfully placed at ({x:.3f}, {y:.3f}, {z:.3f})"
-
-            except Exception as e:
-                return f"ERROR in {tool_name}: {e}"
-        
-        tools.append(place_at)
-
-        # -------------------- Vision Tools --------------------
-
-        @tool
-        def detect_objects() -> str:
-            """
-            Call /vision/detect_objects (DetectObjects.srv) which returns bounding boxes and meta info.
-            Returns a short textual summary with counts and first few bboxes.
-            """
-            tool_name = "detect_objects"
-            with self._tools_called_lock:
-                self._tools_called.append(tool_name)
-
-            try:
-                if not self.vision_detect_objects_client.wait_for_service(timeout_sec=5.0):
-                    return "Service /vision/detect_objects unavailable"
-                req = DetectObjects.Request()
-                future = self.vision_detect_objects_client.call_async(req)
-                rclpy.spin_until_future_complete(self, future)
-                resp = future.result()
-                if resp is None:
-                    return "No response from /vision/detect_objects"
-                if not resp.success:
-                    return f"detect_objects failed: {resp.error_message or 'unknown error'}"
-                total = int(resp.total_detections)
-                # Compose a compact summary: list first 3 detections
-                items = []
-                N = min(total, 3)
-                for i in range(N):
-                    oid = resp.object_ids[i] if i < len(resp.object_ids) else f"obj_{i}"
-                    x1 = resp.bbox_x1[i] if i < len(resp.bbox_x1) else -1
-                    y1 = resp.bbox_y1[i] if i < len(resp.bbox_y1) else -1
-                    x2 = resp.bbox_x2[i] if i < len(resp.bbox_x2) else -1
-                    y2 = resp.bbox_y2[i] if i < len(resp.bbox_y2) else -1
-                    conf = resp.confidences[i] if i < len(resp.confidences) else 0.0
-                    dist = resp.distances_cm[i] if i < len(resp.distances_cm) else -1.0
-                    items.append(f"{oid} bbox=[{x1},{y1},{x2},{y2}] conf={conf:.2f} dist_cm={dist:.1f}")
-                summary = f"Detected {total} objects. Examples: " + "; ".join(items) if items else f"Detected {total} objects."
-                return summary
-            except Exception as e:
-                return f"ERROR in detect_objects: {e}"
-
-        # tools.append(detect_objects)
-
-        @tool
-        def classify_all() -> str:
-            """
-            Trigger /vision/classify_all (std_srvs/Trigger) to classify entire frame or all detections.
-            """
-            tool_name = "classify_all"
-            with self._tools_called_lock:
-                self._tools_called.append(tool_name)
-            try:
-                if not self.vision_classify_all_client.wait_for_service(timeout_sec=5.0):
-                    return "Service /vision/classify_all unavailable"
-                req = Trigger.Request()
-                future = self.vision_classify_all_client.call_async(req)
-                rclpy.spin_until_future_complete(self, future)
-                resp = future.result()
-                if resp is None:
-                    return "No response from /vision/classify_all"
-                return f"classify_all: success={resp.success}, message={resp.message}"
-            except Exception as e:
-                return f"ERROR in classify_all: {e}"
-
-        # tools.append(classify_all)
-
-        @tool
-        def classify_bb(x1: int, y1: int, x2: int, y2: int) -> str:
-            """
-            Call /vision/classify_bb with bounding box coordinates.
-            Returns the top label + confidence and the raw 'all_predictions' JSON string (truncated).
-            """
-            tool_name = "classify_bb"
-            with self._tools_called_lock:
-                self._tools_called.append(tool_name)
-            try:
-                if not self.vision_classify_bb_client.wait_for_service(timeout_sec=5.0):
-                    return "Service /vision/classify_bb unavailable"
-                req = ClassifyBBox.Request()
-                req.x1 = int(x1)
-                req.y1 = int(y1)
-                req.x2 = int(x2)
-                req.y2 = int(y2)
-                future = self.vision_classify_bb_client.call_async(req)
-                rclpy.spin_until_future_complete(self, future)
-                resp = future.result()
-                if resp is None:
-                    return "No response from /vision/classify_bb"
-                if not resp.success:
-                    return f"classify_bb failed: {resp.all_predictions or 'error'}"
-                # Truncate long JSON if needed
-                allpred = resp.all_predictions
-                if len(allpred) > 400:
-                    allpred_trunc = allpred[:400] + "...(truncated)"
-                else:
-                    allpred_trunc = allpred
-                return f"classify_bb: label='{resp.label}', confidence={resp.confidence:.3f}, all_predictions={allpred_trunc}"
-            except Exception as e:
-                return f"ERROR in classify_bb: {e}"
-
-        # tools.append(classify_bb)
-
-        @tool
-        def detect_grasp() -> str:
-            """
-            Call /vision/detect_grasp to compute grasps for all detected objects.
-            Returns a short summary describing how many grasps were found and top qualities.
-            """
-            tool_name = "detect_grasp"
-            with self._tools_called_lock:
-                self._tools_called.append(tool_name)
-            try:
-                if not self.vision_detect_grasp_client.wait_for_service(timeout_sec=5.0):
-                    return "Service /vision/detect_grasp unavailable"
-                req = DetectGrasps.Request()
-                future = self.vision_detect_grasp_client.call_async(req)
-                rclpy.spin_until_future_complete(self, future)
-                resp = future.result()
-                if resp is None:
-                    return "No response from /vision/detect_grasp"
-                if not resp.success:
-                    return f"detect_grasp failed: {resp.error_message or 'unknown'}"
-                total = int(resp.total_grasps)
-                # Inspect first few grasp_poses if available
-                qualities = []
-                try:
-                    for i in range(min(3, len(resp.grasp_poses))):
-                        qualities.append(f"{resp.grasp_poses[i].quality_score:.3f}")
-                except Exception:
-                    pass
-                qual_summary = ", ".join(qualities) if qualities else "no quality info"
-                return f"detect_grasp: total_grasps={total}, sample_qualities=[{qual_summary}]"
-            except Exception as e:
-                return f"ERROR in detect_grasp: {e}"
-
-        # tools.append(detect_grasp)
-
-        @tool
-        def detect_grasp_bb(x1: int, y1: int, x2: int, y2: int) -> str:
-            """
-            Call /vision/detect_grasp_bb to compute a single grasp pose for the specified bounding box.
-            Returns a compact textual description of the returned GraspPose.
-            """
-            tool_name = "detect_grasp_bb"
-            with self._tools_called_lock:
-                self._tools_called.append(tool_name)
-            try:
-                if not self.vision_detect_grasp_bb_client.wait_for_service(timeout_sec=5.0):
-                    return "Service /vision/detect_grasp_bb unavailable"
-                req = DetectGraspBBox.Request()
-                req.x1 = int(x1)
-                req.y1 = int(y1)
-                req.x2 = int(x2)
-                req.y2 = int(y2)
-                future = self.vision_detect_grasp_bb_client.call_async(req)
-                rclpy.spin_until_future_complete(self, future)
-                resp = future.result()
-                if resp is None:
-                    return "No response from /vision/detect_grasp_bb"
-                if not resp.success:
-                    return f"detect_grasp_bb failed: {resp.error_message or 'unknown'}"
-                gp = resp.grasp_pose
-                pos = gp.position
-                ori = gp.orientation
-                return (f"grasp_bb: object_id={gp.object_id}, bbox={list(gp.bbox)}, "
-                        f"pos=({pos.x:.3f},{pos.y:.3f},{pos.z:.3f}), "
-                        f"ori=({ori.x:.3f},{ori.y:.3f},{ori.z:.3f},{ori.w:.3f}), "
-                        f"quality={gp.quality_score:.3f}, width={gp.width:.3f}, approach={gp.approach_direction}")
-            except Exception as e:
-                return f"ERROR in detect_grasp_bb: {e}"
-
-        # tools.append(detect_grasp_bb)
-
-        @tool
-        def understand_scene() -> str:
-            """
-            Call /vision/understand_scene which returns a SceneUnderstanding message.
-            We extract a short natural-language summary and a few stats for the LLM.
-            """
-            tool_name = "understand_scene"
-            with self._tools_called_lock:
-                self._tools_called.append(tool_name)
-            try:
-                if not self.vision_understand_scene_client.wait_for_service(timeout_sec=5.0):
-                    return "Service /vision/understand_scene unavailable"
-                req = UnderstandScene.Request()
-                future = self.vision_understand_scene_client.call_async(req)
-                rclpy.spin_until_future_complete(self, future)
-                resp = future.result()
-                if resp is None:
-                    return "No response from /vision/understand_scene"
-                if not resp.success:
-                    return f"understand_scene failed: {resp.error_message or 'unknown'}"
-                # resp.scene.scene_description is a string summary (as per your definition)
-                summary = getattr(resp.scene, "scene_description", None)
-                if summary:
-                    return f"scene_summary: {summary}"
-                # fallback to counts and labels if description not present
-                total_objects = getattr(resp.scene, "total_objects", None)
-                labels = getattr(resp.scene, "object_labels", None)
-                return f"scene_summary: total_objects={total_objects}, labels={labels}"
-            except Exception as e:
-                return f"ERROR in understand_scene: {e}"
-
-        # tools.append(understand_scene)
 
         @tool
         def find_object(object_name: str) -> str:
@@ -871,25 +678,9 @@ class Ros2LLMAgentNode(Node):
             with self._tools_called_lock:
                 self._tools_called.append(tool_name)
             try:
-                if not self.find_object_client.wait_for_service(timeout_sec=5.0):
-                    return "Service /find_object unavailable"
-                req = FindObjectReal.Request()
-                req.label = object_name
-                future = self.find_object_client.call_async(req)
-                rclpy.spin_until_future_complete(self, future)
-                resp = future.result()
-                if resp is None:
-                    return "No response from /find_object"
-                if not resp.success:
-                    return f"find_object failed: {resp.error_message or 'unknown'}"
-                x = resp.x
-                y = resp.y
-                z = resp.z
-                if x is None or y is None or z is None:
-                    return f"{object_name} not found in the scene."
-                return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={z:.3f}."
+                return self._find_object(object_name)
             except Exception as e:
-                return f"ERROR in find_object: {e}"
+                return f"ERROR in {tool_name}: {e}"
 
         tools.append(find_object)
 
@@ -903,42 +694,53 @@ class Ros2LLMAgentNode(Node):
                 self._tools_called.append(tool_name)
 
             try:
-                find_result = find_object(object_name)
-                if "not found" in find_result.lower() or "failed" in find_result.lower():
-                    return f"move_to_object aborted: {find_result}"
-
-                pos_match = re.search(r"x=([-0-9.eE]+).*y=([-0-9.eE]+).*z=([-0-9.eE]+)", find_result)
-                if not pos_match:
-                    return f"Could not parse object position from: {find_result}"
-                pos_x, pos_y, pos_z = map(float, pos_match.groups())
-
-                pose_result = get_current_pose()
-                ori_match = re.search(
-                    r"orientation.*x:\s*([-0-9.eE]+).*y:\s*([-0-9.eE]+).*z:\s*([-0-9.eE]+).*w:\s*([-0-9.eE]+)",
-                    pose_result,
-                    re.DOTALL,
-                )
-
-                if ori_match:
-                    rot_x, rot_y, rot_z, rot_w = map(float, ori_match.groups())
-                else:
-                    fallback_pose = REAL_READY_POSE if self.real_hardware else SIM_READY_POSE
-                    rot_x = fallback_pose.orientation.x
-                    rot_y = fallback_pose.orientation.y
-                    rot_z = fallback_pose.orientation.z
-                    rot_w = fallback_pose.orientation.w
-
-                return move_linear_to_pose(pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w)
+                return self._move_to_object(object_name)
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
 
         tools.append(move_to_object)
 
         @tool
+        def place_at(x: float, y: float, z: float) -> str:
+            """
+            Move to a position above the target, then opening the gripper.
+            """
+            tool_name = "place_at"
+            self.get_logger().info(f"[place_at] Placing object at ({x:.3f}, {y:.3f}, {z:.3f})")
+            with self._tools_called_lock:
+                self._tools_called.append(tool_name)
+
+            try:
+                # Move to the target
+                move_to_result = self._move_linear_to_pose(x, y, z, 0, 0, 0, 1)
+                if "success=False" in move_to_result:
+                    return f"Failed to move to target: {move_to_result}"
+
+                time.sleep(TOOL_DELAY)
+
+                # Open gripper
+                if self.real_hardware:
+                    open_gripper_result = self._close_gripper(False)
+                else:
+                    open_gripper_result = self._set_gripper_position(0.0, 0.1)
+                if "success=False" in open_gripper_result:
+                    return f"Failed to open gripper: {open_gripper_result}"
+
+                time.sleep(TOOL_DELAY)
+
+                return f"Successfully placed at ({x:.3f}, {y:.3f}, {z:.3f})"
+
+            except Exception as e:
+                return f"ERROR in {tool_name}: {e}"
+        
+        tools.append(place_at)
+
+        @tool
         def pickup_object(object_name: str) -> str:
             """
             Move to ready, open gripper, go to the object, descend slightly, then close the gripper.
             """
+            self.get_logger().info(f"[pickup_object] Picking up {object_name}")
             tool_name = "pickup_object"
             with self._tools_called_lock:
                 self._tools_called.append(tool_name)
@@ -946,26 +748,43 @@ class Ros2LLMAgentNode(Node):
             try:
                 sequence = []
 
-                sequence.append(move_to_ready())
+                move_to_ready_result = self._move_to_ready()
+                sequence.append(move_to_ready_result)
+
+                time.sleep(TOOL_DELAY)
 
                 if self.real_hardware:
-                    sequence.append(close_gripper(False))
+                    open_gripper_result = self._close_gripper(False)
                 else:
-                    sequence.append(set_gripper_position(0.0, 0.01))
+                    open_gripper_result = self._set_gripper_position(0.0, 0.01)
+                sequence.append(open_gripper_result)
 
-                move_result = move_to_object(object_name)
+                time.sleep(TOOL_DELAY)
+
+                move_result = self._move_to_object(object_name)
                 sequence.append(move_result)
                 if "success=False" in move_result or "aborted" in move_result:
                     return "; ".join(sequence)
 
-                sequence.append(move_relative(0.0, 0.0, -0.05, 0.0, 0.0, 0.0))
+                time.sleep(TOOL_DELAY)
+
+                move_down_result = self._move_relative(0.0, 0.0, -0.01, 0.0, 0.0, 0.0)
+                sequence.append(move_down_result)
+
+                time.sleep(TOOL_DELAY)
 
                 if self.real_hardware:
-                    sequence.append(close_gripper(True))
+                    close_gripper_result = self._close_gripper(True)
                 else:
-                    sequence.append(set_gripper_position(0.8, 0.01))
+                    close_gripper_result = self._set_gripper_position(0.8, 0.01)
+                sequence.append(close_gripper_result)
 
-                return "; ".join(sequence)
+                time.sleep(TOOL_DELAY)
+
+                move_up_result = self._move_relative(0.0, 0.0, 0.01, 0.0, 0.0, 0.0)
+                sequence.append(move_up_result)
+
+                return f"Successfully picked up {object_name}"
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
 
@@ -983,10 +802,10 @@ class Ros2LLMAgentNode(Node):
         if self.real_hardware:
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
-                "query sensors, perceive the environment, or command the robot: get_current_pose, get_joint_angles, "
-                "move_linear_to_pose, set_gripper_position, move_relative, move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, find_object, move_to_object, pickup_object. "
+                "query sensors, perceive the environment, or command the robot: get_current_pose, move_linear_to_pose, set_gripper_position, move_relative,"
+                "move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, find_object, move_to_object, pickup_object. "
+                "try to use as few tools as possible to accomplish the task.\n"
                 f"Home is at {REAL_HOME_POSE}, ready is at {REAL_READY_POSE}, handover is at {REAL_HANDOVER_POSE}.\n"
-                # "detect_objects, classify_all, classify_bb, detect_grasp, detect_grasp_bb, understand_scene.\n"
                 "If you are instructed to move a certain direction (e.g., UP, DOWN, FORWARD, BACKWARD, LEFT, RIGHT), use the move_relative tool with small increments (e.g., 0.05m).\n"
                 "If you are instructed to move to position you don't know, make reasonable assumptions, DO NOT ask for clarification.\n"
                 "When you choose to use a tool, call it with appropriate arguments (if any). "
@@ -996,18 +815,14 @@ class Ros2LLMAgentNode(Node):
                 "- The direction up is along positive Z axis, down is along negative Z axis.\n"
                 "- The direction forward is along negative Y axis, backward is along positive Y axis.\n"
                 "- The direction left is along positive X axis, right is along negative X axis.\n"
-                "- The human operator you are assisting is to your right side (negative X direction).\n"
-                "- You can spin/twist the gripper by using move_relative with yaw adjustments.\n"
-                "- Use vision tools (detect_objects/classify_bb/detect_grasp_bb) to perceive which object to manipulate.\n"
-                "- For bbox-based tools, provide integer pixel coordinates [x1,y1,x2,y2].\n"
             )
         else:
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
-                "query sensors, perceive the environment, or command the robot: get_current_pose, get_joint_angles, "
-                "move_linear_to_pose, set_gripper_position, move_relative, move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, find_object, move_to_object, pickup_object. "
+                "query sensors, perceive the environment, or command the robot: get_current_pose, move_linear_to_pose, set_gripper_position, move_relative,"
+                "move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, find_object, move_to_object, pickup_object. "
+                "try to use as few tools as possible to accomplish the task.\n"
                 f"Home is at {SIM_HOME_POSE}, ready is at {SIM_READY_POSE}, handover is at {SIM_HANDOVER_POSE}.\n"
-                # "detect_objects, classify_all, classify_bb, detect_grasp, detect_grasp_bb, understand_scene.\n"
                 "If you are **EXPLICITLY** instructed to **OPEN** the gripper, set the gripper position to 0.0. "
                 "If you are **EXPLICITLY** instructed to **GRAB** an object, set the gripper position to 0.2. "
                 "If you are **EXPLICITLY** instructed to **CLOSE** the gripper, set the gripper position to 0.8. "
@@ -1022,10 +837,6 @@ class Ros2LLMAgentNode(Node):
                 "- The direction up is along positive Z axis, down is along negative Z axis.\n"
                 "- The direction forward is along positive X axis, backward is along negative X axis.\n"
                 "- The direction left is along positive Y axis, right is along negative Y axis.\n"
-                "- The human operator you are assisting is to your right side (negative Y direction).\n"
-                "- You can spin/twist the gripper by using move_relative with yaw adjustments.\n"
-                "- Use vision tools (detect_objects/classify_bb/detect_grasp_bb) to perceive which object to manipulate.\n"
-                "- For bbox-based tools, provide integer pixel coordinates [x1,y1,x2,y2].\n"
             )
 
         prompt = ChatPromptTemplate.from_messages(
