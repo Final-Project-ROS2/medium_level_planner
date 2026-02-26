@@ -749,7 +749,11 @@ class Ros2LLMAgentNode(Node):
 
             try:
                 # Move to the target
-                move_to_result = self._move_linear_to_pose(x, y, z, 0, 0, 0, 1)
+                if self.real_hardware:
+                    orient_down_pose = REAL_ORIENT_DOWN_POSE
+                else:
+                    orient_down_pose = SIM_ORIENT_DOWN_POSE
+                move_to_result = self._move_linear_to_pose(x, y, z, orient_down_pose.orientation.x, orient_down_pose.orientation.y, orient_down_pose.orientation.z, orient_down_pose.orientation.w)
                 if "success=False" in move_to_result:
                     return f"Failed to move to target: {move_to_result}"
 
@@ -771,6 +775,56 @@ class Ros2LLMAgentNode(Node):
                 return f"ERROR in {tool_name}: {e}"
         
         tools.append(place_at)
+
+        @tool
+        def place_at_setpoint(setpoint: str) -> str:
+            """
+            Move to a predefined setpoint (home, ready, handover) and place the object there.
+            """
+            tool_name = "place_at_setpoint"
+            self.get_logger().info(f"[place_at_setpoint] Placing object at setpoint {setpoint}")
+            with self._tools_called_lock:
+                self._tools_called.append(tool_name)
+
+            try:
+                # Move to the target
+                if self.real_hardware:
+                    if setpoint == "home":
+                        target_pose = REAL_HOME_POSE
+                    elif setpoint == "handover":
+                        target_pose = REAL_HANDOVER_POSE
+                    else:
+                        target_pose = REAL_READY_POSE
+                else:
+                    if setpoint == "home":
+                        target_pose = SIM_HOME_POSE
+                    elif setpoint == "handover":
+                        target_pose = SIM_HANDOVER_POSE
+                    else:
+                        target_pose = SIM_READY_POSE
+
+                move_to_result = self._move_linear_to_pose(target_pose.position.x, target_pose.position.y, target_pose.position.z, target_pose.orientation.x, target_pose.orientation.y, target_pose.orientation.z, target_pose.orientation.w)
+                if "success=False" in move_to_result:
+                    return f"Failed to move to target: {move_to_result}"
+
+                time.sleep(TOOL_DELAY)
+
+                # Open gripper
+                if self.real_hardware:
+                    open_gripper_result = self._close_gripper(False)
+                else:
+                    open_gripper_result = self._set_gripper_position(0.0, 0.1)
+                if "success=False" in open_gripper_result:
+                    return f"Failed to open gripper: {open_gripper_result}"
+
+                time.sleep(TOOL_DELAY)
+
+                return f"Successfully placed at {setpoint}"
+
+            except Exception as e:
+                return f"ERROR in {tool_name}: {e}"
+        
+        tools.append(place_at_setpoint)
 
         @tool
         def pickup_object(object_name: str) -> str:
@@ -840,7 +894,9 @@ class Ros2LLMAgentNode(Node):
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
                 "query sensors, perceive the environment, or command the robot: get_current_pose, move_linear_to_pose, set_gripper_position, move_relative,"
-                "move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, find_object, move_to_object, pickup_object, find_boundary. "
+                "move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, place_at_setpoint, find_object, move_to_object, pickup_object, find_boundary. "
+                "use place_at_setpoint to place an object at a setpoint (home, ready, handover), use place_at to place an object at a specific position (x, y, z).\n"
+                "try to use complex tools (pickup_object, place_at, place_at_setpoint) instead of a sequence of simple tools.\n"
                 "try to use as few tools as possible to accomplish the task.\n"
                 f"Home is at {REAL_HOME_POSE}, ready is at {REAL_READY_POSE}, handover is at {REAL_HANDOVER_POSE}.\n"
                 "If you are instructed to move a certain direction (e.g., UP, DOWN, FORWARD, BACKWARD, LEFT, RIGHT), use the move_relative tool with small increments (e.g., 0.05m).\n"
@@ -857,7 +913,9 @@ class Ros2LLMAgentNode(Node):
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
                 "query sensors, perceive the environment, or command the robot: get_current_pose, move_linear_to_pose, set_gripper_position, move_relative,"
-                "move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, find_object, move_to_object, pickup_object, find_boundary. "
+                "move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, place_at_setpoint, find_object, move_to_object, pickup_object, find_boundary. "
+                "use place_at_setpoint to place an object at a setpoint (home, ready, handover), use place_at to place an object at a specific position (x, y, z).\n"
+                "try to use complex tools (pickup_object, place_at, place_at_setpoint) instead of a sequence of simple tools.\n"
                 "try to use as few tools as possible to accomplish the task.\n"
                 f"Home is at {SIM_HOME_POSE}, ready is at {SIM_READY_POSE}, handover is at {SIM_HANDOVER_POSE}.\n"
                 "If you are **EXPLICITLY** instructed to **OPEN** the gripper, set the gripper position to 0.0. "
