@@ -50,6 +50,7 @@ from custom_interfaces.srv import (
     UnderstandScene,
     FindObjectReal,
     FindObjectGrasp,
+    FindBoundary,
 )
 
 from custom_interfaces.srv import GetSetBool
@@ -197,6 +198,7 @@ class Ros2LLMAgentNode(Node):
         self.vision_understand_scene_client = self.create_client(UnderstandScene, "/vision/understand_scene")
         self.find_object_client = self.create_client(FindObjectReal, "/find_object")
         self.find_object_grasp_client = self.create_client(FindObjectGrasp, "/find_object_grasp")
+        self.find_boundary_client = self.create_client(FindBoundary, "/find_boundary")
 
         # PDDL state service clients
         self.is_home_client = self.create_client(GetSetBool, "/is_home")
@@ -417,6 +419,26 @@ class Ros2LLMAgentNode(Node):
             return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={REAL_READY_POSE.position.z:.3f}"
         else:
             return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={SIM_READY_POSE.position.z:.3f}"
+    
+    def _find_boundary(self, object_name: str) -> str:
+        self.get_logger().info(f"[_find_boundary] Searching for boundary of {object_name}")
+        if not self.find_boundary_client.wait_for_service(timeout_sec=5.0):
+            return "Service /find_boundary unavailable"
+        req = FindBoundary.Request()
+        req.label = object_name
+        future = self.find_boundary_client.call_async(req)
+        rclpy.spin_until_future_complete(self, future)
+        resp = future.result()
+        if resp is None:
+            return "No response from /find_boundary"
+        if not resp.success:
+            return f"find_boundary failed: {resp.error_message or 'unknown'}"
+        x_min, x_max, y_min, y_max = resp.x1, resp.x2, resp.y1, resp.y2
+        if None in [x_min, x_max, y_min, y_max]:
+            return f"Boundary for {object_name} not found."
+        return (f"Boundary of {object_name}: "
+                f"x=[{x_min:.3f}, {x_max:.3f}], "
+                f"y=[{y_min:.3f}, {y_max:.3f}]")
 
     def _fetch_current_pose(self) -> Optional[Pose]:
         self.get_logger().info("[_fetch_current_pose] Requesting current pose")
@@ -685,6 +707,21 @@ class Ros2LLMAgentNode(Node):
         tools.append(find_object)
 
         @tool
+        def find_boundary(object_name: str) -> str:
+            """
+            Call /find_boundary which returns the boundary coordinates of the specified object.
+            """
+            tool_name = "find_boundary"
+            with self._tools_called_lock:
+                self._tools_called.append(tool_name)
+            try:
+                return self._find_boundary(object_name)
+            except Exception as e:
+                return f"ERROR in {tool_name}: {e}"
+        
+        tools.append(find_boundary)
+
+        @tool
         def move_to_object(object_name: str) -> str:
             """
             Look up an object's position with find_object then move there preserving current orientation.
@@ -803,7 +840,7 @@ class Ros2LLMAgentNode(Node):
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
                 "query sensors, perceive the environment, or command the robot: get_current_pose, move_linear_to_pose, set_gripper_position, move_relative,"
-                "move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, find_object, move_to_object, pickup_object. "
+                "move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, find_object, move_to_object, pickup_object, find_boundary. "
                 "try to use as few tools as possible to accomplish the task.\n"
                 f"Home is at {REAL_HOME_POSE}, ready is at {REAL_READY_POSE}, handover is at {REAL_HANDOVER_POSE}.\n"
                 "If you are instructed to move a certain direction (e.g., UP, DOWN, FORWARD, BACKWARD, LEFT, RIGHT), use the move_relative tool with small increments (e.g., 0.05m).\n"
@@ -820,7 +857,7 @@ class Ros2LLMAgentNode(Node):
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
                 "query sensors, perceive the environment, or command the robot: get_current_pose, move_linear_to_pose, set_gripper_position, move_relative,"
-                "move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, find_object, move_to_object, pickup_object. "
+                "move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, find_object, move_to_object, pickup_object, find_boundary. "
                 "try to use as few tools as possible to accomplish the task.\n"
                 f"Home is at {SIM_HOME_POSE}, ready is at {SIM_READY_POSE}, handover is at {SIM_HANDOVER_POSE}.\n"
                 "If you are **EXPLICITLY** instructed to **OPEN** the gripper, set the gripper position to 0.0. "
