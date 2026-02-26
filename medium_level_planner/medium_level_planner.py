@@ -718,6 +718,8 @@ class Ros2LLMAgentNode(Node):
                 return self._find_boundary(object_name)
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
+        
+        tools.append(find_boundary)
 
         @tool
         def move_to_object(object_name: str) -> str:
