@@ -859,10 +859,10 @@ class Ros2LLMAgentNode(Node):
 
                 time.sleep(TOOL_DELAY)
 
-                move_down_result = self._move_relative(0.0, 0.0, -0.01, 0.0, 0.0, 0.0)
-                sequence.append(move_down_result)
+                # move_down_result = self._move_relative(0.0, 0.0, -0.01, 0.0, 0.0, 0.0)
+                # sequence.append(move_down_result)
 
-                time.sleep(TOOL_DELAY)
+                # time.sleep(TOOL_DELAY)
 
                 if self.real_hardware:
                     close_gripper_result = self._close_gripper(True)
@@ -872,7 +872,7 @@ class Ros2LLMAgentNode(Node):
 
                 time.sleep(TOOL_DELAY)
 
-                move_up_result = self._move_relative(0.0, 0.0, 0.01, 0.0, 0.0, 0.0)
+                move_up_result = self._move_relative(0.0, 0.0, 0.20, 0.0, 0.0, 0.0)
                 sequence.append(move_up_result)
 
                 return f"Successfully picked up {object_name}"
