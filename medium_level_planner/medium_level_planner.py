@@ -23,6 +23,7 @@ import os
 import re
 import threading
 import time
+import math
 from typing import List, Dict, Any, Optional
 
 import rclpy
@@ -538,18 +539,34 @@ class Ros2LLMAgentNode(Node):
             return f"Could not parse object position from: {find_result}"
         pos_x, pos_y, pos_z = map(float, pos_match.groups())
 
-        current_pose = self._fetch_current_pose()
-        if current_pose is not None:
-            rot_x = current_pose.orientation.x
-            rot_y = current_pose.orientation.y
-            rot_z = current_pose.orientation.z
-            rot_w = current_pose.orientation.w
-        else:
-            fallback_pose = REAL_READY_POSE if self.real_hardware else SIM_READY_POSE
-            rot_x = fallback_pose.orientation.x
-            rot_y = fallback_pose.orientation.y
-            rot_z = fallback_pose.orientation.z
-            rot_w = fallback_pose.orientation.w
+        ori_match = re.search(
+            r"qx=([-0-9.eE]+).*qy=([-0-9.eE]+).*qz=([-0-9.eE]+).*qw=([-0-9.eE]+)",
+            find_result
+        )
+        if not ori_match:
+            return f"Could not parse object orientation from: {find_result}"
+        qx_cam, qy_cam, qz_cam, qw_cam = map(float, ori_match.groups())
+
+        yaw_cam = quaternion_to_yaw(qx_cam, qy_cam, qz_cam, qw_cam)
+
+        half = yaw_cam / 2.0
+        rot_x = 0.0
+        rot_y = 0.0
+        rot_z = math.sin(half)
+        rot_w = math.cos(half)
+
+        # current_pose = self._fetch_current_pose()
+        # if current_pose is not None:
+        #     rot_x = current_pose.orientation.x
+        #     rot_y = current_pose.orientation.y
+        #     rot_z = current_pose.orientation.z
+        #     rot_w = current_pose.orientation.w
+        # else:
+        #     fallback_pose = REAL_READY_POSE if self.real_hardware else SIM_READY_POSE
+        #     rot_x = fallback_pose.orientation.x
+        #     rot_y = fallback_pose.orientation.y
+        #     rot_z = fallback_pose.orientation.z
+        #     rot_w = fallback_pose.orientation.w
 
         return self._move_linear_to_pose(pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w)
 
@@ -1020,6 +1037,12 @@ class Ros2LLMAgentNode(Node):
         goal_handle.succeed()
         self.get_logger().info(f"[action] Goal finished. success={result_msg.success}")
         return result_msg
+
+def quaternion_to_yaw(qx, qy, qz, qw):
+    # yaw (Z-axis rotation)
+    siny_cosp = 2.0 * (qw * qz + qx * qy)
+    cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz)
+    return math.atan2(siny_cosp, cosy_cosp)
 
 
 def main(args=None):
