@@ -51,6 +51,8 @@ from custom_interfaces.srv import (
     FindObjectReal,
     FindObjectGrasp,
     FindBoundary,
+    FindMultiObject,
+    FindMultiObjectGrasp,
 )
 
 from custom_interfaces.srv import GetSetBool
@@ -199,6 +201,8 @@ class Ros2LLMAgentNode(Node):
         self.find_object_client = self.create_client(FindObjectReal, "/find_object")
         self.find_object_grasp_client = self.create_client(FindObjectGrasp, "/find_object_grasp")
         self.find_boundary_client = self.create_client(FindBoundary, "/find_boundary")
+        self.find_multi_object_client = self.create_client(FindMultiObject, "/find_multi_object")
+        self.find_multi_object_grasp_client = self.create_client(FindMultiObjectGrasp, "/find_multi_object_grasp")
 
         # PDDL state service clients
         self.is_home_client = self.create_client(GetSetBool, "/is_home")
@@ -423,6 +427,28 @@ class Ros2LLMAgentNode(Node):
             return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={z:.3f}"
         else:
             return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={z:.3f}"
+    
+    def _find_multi_object(self, object_name: str, instances: int) -> str:
+        self.get_logger().info(f"[_find_multi_object] Searching for all instances of {object_name}")
+        if not self.find_multi_object_grasp_client.wait_for_service(timeout_sec=5.0):
+            return "Service /find_multi_object_grasp unavailable"
+        req = FindMultiObjectGrasp.Request()
+        req.label = object_name
+        req.k = instances
+        future = self.find_multi_object_grasp_client.call_async(req)
+        rclpy.spin_until_future_complete(self, future)
+        resp = future.result()
+        if resp is None:
+            return "No response from /find_multi_object_grasp"
+        if not resp.success:
+            return f"find_multi_object_grasp failed: {resp.error_message or 'unknown'}"
+        if not resp.grasp_poses:
+            return f"No instances of {object_name} found."
+        result_str = f"Found {len(resp.grasp_poses)} instance(s) of {object_name}:\n"
+        result_str += f"{object_name} grasp poses from left to right:\n"
+        for i, pose in enumerate(resp.grasp_poses):
+            result_str += f"  Instance {i+1}: x={pose.position.x:.3f}, y={pose.position.y:.3f}, z={pose.position.z:.3f}\n"
+        return result_str.strip()
     
     def _find_boundary(self, object_name: str) -> str:
         self.get_logger().info(f"[_find_boundary] Searching for boundary of {object_name}")
@@ -711,6 +737,21 @@ class Ros2LLMAgentNode(Node):
         tools.append(find_object)
 
         @tool
+        def find_multi_object(object_name: str, instances: int) -> str:
+            """
+            Call /find_multi_object which returns the positions of all instances of the specified object.
+            """
+            tool_name = "find_multi_object"
+            with self._tools_called_lock:
+                self._tools_called.append(tool_name)
+            try:
+                return self._find_multi_object(object_name, instances)
+            except Exception as e:
+                return f"ERROR in {tool_name}: {e}"
+
+        tools.append(find_multi_object)
+
+        @tool
         def find_boundary(object_name: str) -> str:
             """
             Call /find_boundary which returns the boundary coordinates of the specified object.
@@ -831,6 +872,50 @@ class Ros2LLMAgentNode(Node):
         tools.append(place_at_setpoint)
 
         @tool
+        def pickup_at(x: float, y: float, z: float) -> str:
+            """
+            Move to a position above the target, then descend, close the gripper, and move up.
+            """
+            tool_name = "pickup_at"
+            self.get_logger().info(f"[pickup_at] Picking up object at ({x:.3f}, {y:.3f}, {z:.3f})")
+            with self._tools_called_lock:
+                self._tools_called.append(tool_name)
+
+            try:
+                # Move to the target
+                if self.real_hardware:
+                    orient_down_pose = REAL_ORIENT_DOWN_POSE
+                else:
+                    orient_down_pose = SIM_ORIENT_DOWN_POSE
+                move_to_result = self._move_linear_to_pose(x, y, z, orient_down_pose.orientation.x, orient_down_pose.orientation.y, orient_down_pose.orientation.z, orient_down_pose.orientation.w)
+                if "success=False" in move_to_result:
+                    return f"Failed to move to target: {move_to_result}"
+
+                time.sleep(TOOL_DELAY)
+
+                # Close gripper
+                if self.real_hardware:
+                    close_gripper_result = self._close_gripper(True)
+                else:
+                    close_gripper_result = self._set_gripper_position(0.8, 0.1)
+                if "success=False" in close_gripper_result:
+                    return f"Failed to close gripper: {close_gripper_result}"
+
+                time.sleep(TOOL_DELAY)
+
+                # Move up
+                move_up_result = self._move_relative(0.0, 0.0, 0.15, 0.0, 0.0, 0.0)
+                if "success=False" in move_up_result:
+                    return f"Failed to move up after pickup: {move_up_result}"
+
+                return f"Successfully picked up object at ({x:.3f}, {y:.3f}, {z:.3f})"
+
+            except Exception as e:
+                return f"ERROR in {tool_name}: {e}"
+
+        tools.append(pickup_at)
+
+        @tool
         def pickup_object(object_name: str) -> str:
             """
             Move to ready, open gripper, go to the object, descend slightly, then close the gripper.
@@ -898,9 +983,9 @@ class Ros2LLMAgentNode(Node):
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
                 "query sensors, perceive the environment, or command the robot: get_current_pose, move_linear_to_pose, set_gripper_position, move_relative,"
-                "move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, place_at_setpoint, find_object, move_to_object, pickup_object, find_boundary. "
+                "move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, place_at_setpoint, find_object, find_multi_object, move_to_object, pickup_object, pickup_at, find_boundary. "
                 "use place_at_setpoint to place an object at a setpoint (home, ready, handover), use place_at to place an object at a specific position (x, y, z).\n"
-                "try to use complex tools (pickup_object, place_at, place_at_setpoint) instead of a sequence of simple tools.\n"
+                "try to use complex tools (pickup_object, pickup_at, place_at, place_at_setpoint) instead of a sequence of simple tools.\n"
                 "try to use as few tools as possible to accomplish the task.\n"
                 "If the instruction matches with a tool, use that tool directly ONLY.\n"
                 f"Home is at {REAL_HOME_POSE}, ready is at {REAL_READY_POSE}, handover is at {REAL_HANDOVER_POSE}.\n"
@@ -918,9 +1003,9 @@ class Ros2LLMAgentNode(Node):
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
                 "query sensors, perceive the environment, or command the robot: get_current_pose, move_linear_to_pose, set_gripper_position, move_relative,"
-                "move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, place_at_setpoint, find_object, move_to_object, pickup_object, find_boundary. "
+                "move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, place_at_setpoint, find_object, find_multi_object, move_to_object, pickup_object, pickup_at, find_boundary. "
                 "use place_at_setpoint to place an object at a setpoint (home, ready, handover), use place_at to place an object at a specific position (x, y, z).\n"
-                "try to use complex tools (pickup_object, place_at, place_at_setpoint) instead of a sequence of simple tools.\n"
+                "try to use complex tools (pickup_object, pickup_at, place_at, place_at_setpoint) instead of a sequence of simple tools.\n"
                 "try to use as few tools as possible to accomplish the task.\n"
                 "If the instruction matches with a tool, use that tool directly ONLY.\n"
                 f"Home is at {SIM_HOME_POSE}, ready is at {SIM_READY_POSE}, handover is at {SIM_HANDOVER_POSE}.\n"
