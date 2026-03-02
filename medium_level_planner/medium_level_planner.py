@@ -415,10 +415,14 @@ class Ros2LLMAgentNode(Node):
         x, y, z = resp.x, resp.y, resp.z
         if x is None or y is None or z is None:
             return f"{object_name} not found in the scene."
+        # if self.real_hardware:
+        #     return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={REAL_READY_POSE.position.z:.3f}"
+        # else:
+        #     return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={SIM_READY_POSE.position.z:.3f}"
         if self.real_hardware:
-            return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={REAL_READY_POSE.position.z:.3f}"
+            return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={z:.3f}"
         else:
-            return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={SIM_READY_POSE.position.z:.3f}"
+            return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={z:.3f}"
     
     def _find_boundary(self, object_name: str) -> str:
         self.get_logger().info(f"[_find_boundary] Searching for boundary of {object_name}")
@@ -655,8 +659,8 @@ class Ros2LLMAgentNode(Node):
         if self.real_hardware:
             @tool
             def close_gripper(close: bool) -> str:
-                tool_name = "close_gripper"
                 """Close or open the gripper (real hardware)."""
+                tool_name = "close_gripper"
                 with self._tools_called_lock:
                     self._tools_called.append(tool_name)
                 try:
@@ -859,10 +863,10 @@ class Ros2LLMAgentNode(Node):
 
                 time.sleep(TOOL_DELAY)
 
-                move_down_result = self._move_relative(0.0, 0.0, -0.01, 0.0, 0.0, 0.0)
-                sequence.append(move_down_result)
+                # move_down_result = self._move_relative(0.0, 0.0, -0.01, 0.0, 0.0, 0.0)
+                # sequence.append(move_down_result)
 
-                time.sleep(TOOL_DELAY)
+                # time.sleep(TOOL_DELAY)
 
                 if self.real_hardware:
                     close_gripper_result = self._close_gripper(True)
@@ -872,7 +876,7 @@ class Ros2LLMAgentNode(Node):
 
                 time.sleep(TOOL_DELAY)
 
-                move_up_result = self._move_relative(0.0, 0.0, 0.01, 0.0, 0.0, 0.0)
+                move_up_result = self._move_relative(0.0, 0.0, 0.15, 0.0, 0.0, 0.0)
                 sequence.append(move_up_result)
 
                 return f"Successfully picked up {object_name}"
