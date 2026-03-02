@@ -401,28 +401,23 @@ class Ros2LLMAgentNode(Node):
 
     def _find_object(self, object_name: str) -> str:
         self.get_logger().info(f"[_find_object] Searching for {object_name}")
-        if not self.find_object_client.wait_for_service(timeout_sec=5.0):
-            return "Service /find_object unavailable"
-        req = FindObjectReal.Request()
+        if not self.find_object_grasp_client.wait_for_service(timeout_sec=5.0):
+            return "Service /find_object_grasp unavailable"
+        req = FindObjectGrasp.Request()
         req.label = object_name
-        future = self.find_object_client.call_async(req)
+        future = self.find_object_grasp_client.call_async(req)
         rclpy.spin_until_future_complete(self, future)
         resp = future.result()
         if resp is None:
-            return "No response from /find_object"
+            return "No response from /find_object_grasp"
         if not resp.success:
-            return f"find_object failed: {resp.error_message or 'unknown'}"
-        x, y, z = resp.x, resp.y, resp.z
+            return f"find_object_grasp failed: {resp.error_message or 'unknown'}"
+        x = resp.grasp_pose.position.x
+        y = resp.grasp_pose.position.y
+        z = resp.grasp_pose.position.z
         if x is None or y is None or z is None:
             return f"{object_name} not found in the scene."
-        # if self.real_hardware:
-        #     return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={REAL_READY_POSE.position.z:.3f}"
-        # else:
-        #     return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={SIM_READY_POSE.position.z:.3f}"
-        if self.real_hardware:
-            return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={z:.3f}"
-        else:
-            return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={z:.3f}"
+        return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={z:.3f}"
     
     def _find_boundary(self, object_name: str) -> str:
         self.get_logger().info(f"[_find_boundary] Searching for boundary of {object_name}")
