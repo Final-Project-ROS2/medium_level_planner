@@ -52,7 +52,7 @@ from custom_interfaces.srv import (
     FindObjectReal,
     FindObjectGrasp,
     FindBoundary,
-    FindMultiObject,
+    FindMultiObjectReal,
     FindMultiObjectGrasp,
 )
 
@@ -202,7 +202,7 @@ class Ros2LLMAgentNode(Node):
         self.find_object_client = self.create_client(FindObjectReal, "/find_object")
         self.find_object_grasp_client = self.create_client(FindObjectGrasp, "/find_object_grasp")
         self.find_boundary_client = self.create_client(FindBoundary, "/find_boundary")
-        self.find_multi_object_client = self.create_client(FindMultiObject, "/find_multi_object")
+        self.find_multi_object_client = self.create_client(FindMultiObjectReal, "/find_multi_object")
         self.find_multi_object_grasp_client = self.create_client(FindMultiObjectGrasp, "/find_multi_object_grasp")
 
         # PDDL state service clients
@@ -429,7 +429,7 @@ class Ros2LLMAgentNode(Node):
         self.get_logger().info(f"[_find_multi_object] Searching for all instances of {object_name}")
         if not self.find_multi_object_client.wait_for_service(timeout_sec=5.0):
             return "Service /find_multi_object unavailable"
-        req = FindMultiObject.Request()
+        req = FindMultiObjectReal.Request()
         req.label = object_name
         req.k = instances
         future = self.find_multi_object_client.call_async(req)
