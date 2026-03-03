@@ -19,6 +19,7 @@ Motion/action tools preserved:
 - gripper control (service or action depending on real_hardware)
 
 """
+import math
 import os
 import re
 import threading
@@ -412,17 +413,13 @@ class Ros2LLMAgentNode(Node):
             return "No response from /find_object"
         if not resp.success:
             return f"find_object failed: {resp.error_message or 'unknown'}"
-        x, y, z = resp.x, resp.y, resp.z
+        x, y, z, theta = resp.x, resp.y, resp.z, resp.theta
         if x is None or y is None or z is None:
             return f"{object_name} not found in the scene."
-        # if self.real_hardware:
-        #     return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={REAL_READY_POSE.position.z:.3f}"
-        # else:
-        #     return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={SIM_READY_POSE.position.z:.3f}"
         if self.real_hardware:
-            return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={z:.3f}"
+            return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={z:.3f}, theta={theta:.3f}"
         else:
-            return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={z:.3f}"
+            return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={z:.3f}, theta={theta:.3f}"
     
     def _find_boundary(self, object_name: str) -> str:
         self.get_logger().info(f"[_find_boundary] Searching for boundary of {object_name}")
@@ -538,24 +535,36 @@ class Ros2LLMAgentNode(Node):
         if "not found" in find_result.lower() or "failed" in find_result.lower():
             return f"move_to_object aborted: {find_result}"
 
-        pos_match = re.search(r"x=([-0-9.eE]+).*y=([-0-9.eE]+).*z=([-0-9.eE]+)", find_result)
+        # Parse position and theta
+        pos_match = re.search(r"x=([-0-9.eE]+).*y=([-0-9.eE]+).*z=([-0-9.eE]+).*theta=([-0-9.eE]+)", find_result)
         if not pos_match:
-            return f"Could not parse object position from: {find_result}"
-        pos_x, pos_y, pos_z = map(float, pos_match.groups())
+            return f"Could not parse object position and theta from: {find_result}"
+        pos_x, pos_y, pos_z, theta = map(float, pos_match.groups())
 
-        current_pose = self._fetch_current_pose()
-        if current_pose is not None:
-            rot_x = current_pose.orientation.x
-            rot_y = current_pose.orientation.y
-            rot_z = current_pose.orientation.z
-            rot_w = current_pose.orientation.w
-        else:
-            fallback_pose = REAL_READY_POSE if self.real_hardware else SIM_READY_POSE
-            rot_x = fallback_pose.orientation.x
-            rot_y = fallback_pose.orientation.y
-            rot_z = fallback_pose.orientation.z
-            rot_w = fallback_pose.orientation.w
-
+        # Get READY_POSE orientation as base
+        base_pose = REAL_READY_POSE if self.real_hardware else SIM_READY_POSE
+        base_quat = [base_pose.orientation.x, base_pose.orientation.y, base_pose.orientation.z, base_pose.orientation.w]
+        
+        # Create rotation quaternion for theta around z-axis
+        # q_z = [0, 0, sin(theta/2), cos(theta/2)] in [x, y, z, w] format
+        half_theta = theta / 2.0
+        z_rotation_quat = [0, 0, math.sin(half_theta), math.cos(half_theta)]
+        
+        # Helper function to multiply quaternions [x, y, z, w]
+        def quaternion_multiply(q1, q2):
+            x1, y1, z1, w1 = q1
+            x2, y2, z2, w2 = q2
+            return [
+                w1*x2 + x1*w2 + y1*z2 - z1*y2,  # x
+                w1*y2 - x1*z2 + y1*w2 + z1*x2,  # y
+                w1*z2 + x1*y2 - y1*x2 + z1*w2,  # z
+                w1*w2 - x1*x2 - y1*y2 - z1*z2,  # w
+            ]
+        
+        # Rotate base quaternion by theta around z-axis
+        rotated_quat = quaternion_multiply(base_quat, z_rotation_quat)
+        rot_x, rot_y, rot_z, rot_w = rotated_quat
+        
         return self._move_linear_to_pose(pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w)
 
     # -----------------------
