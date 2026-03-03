@@ -567,14 +567,27 @@ class Ros2LLMAgentNode(Node):
             return f"Could not parse object position and theta from: {find_result}"
         pos_x, pos_y, pos_z, theta = map(float, pos_match.groups())
 
+        # Log parsed values and theta in degrees
+        theta_deg = math.degrees(theta)
+        self.get_logger().info(
+            f"[_move_to_object] Parsed pose x={pos_x:.3f}, y={pos_y:.3f}, z={pos_z:.3f}, theta={theta:.3f} rad ({theta_deg:.2f} deg)"
+        )
+
+        # Use rotation of (pi - theta) instead of theta
+        theta_rot = math.pi - theta
+        theta_rot_deg = math.degrees(theta_rot)
+        self.get_logger().info(
+            f"[_move_to_object] Using rotation angle (pi - theta) = {theta_rot:.3f} rad ({theta_rot_deg:.2f} deg)"
+        )
+
         # Get READY_POSE orientation as base
         base_pose = REAL_READY_POSE if self.real_hardware else SIM_READY_POSE
         base_quat = [base_pose.orientation.x, base_pose.orientation.y, base_pose.orientation.z, base_pose.orientation.w]
         
         # Create rotation quaternion for theta around z-axis
-        # q_z = [0, 0, sin(theta/2), cos(theta/2)] in [x, y, z, w] format
-        half_theta = theta / 2.0
-        z_rotation_quat = [0, 0, math.sin(half_theta), math.cos(half_theta)]
+        # q_z = [0, 0, sin(theta_rot/2), cos(theta_rot/2)] in [x, y, z, w] format
+        half_theta_rot = theta_rot / 2.0
+        z_rotation_quat = [0, 0, math.sin(half_theta_rot), math.cos(half_theta_rot)]
         
         # Helper function to multiply quaternions [x, y, z, w]
         def quaternion_multiply(q1, q2):
