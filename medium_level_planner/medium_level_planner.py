@@ -427,24 +427,24 @@ class Ros2LLMAgentNode(Node):
     
     def _find_multi_object(self, object_name: str, instances: int) -> str:
         self.get_logger().info(f"[_find_multi_object] Searching for all instances of {object_name}")
-        if not self.find_multi_object_grasp_client.wait_for_service(timeout_sec=5.0):
-            return "Service /find_multi_object_grasp unavailable"
-        req = FindMultiObjectGrasp.Request()
+        if not self.find_multi_object_client.wait_for_service(timeout_sec=5.0):
+            return "Service /find_multi_object unavailable"
+        req = FindMultiObject.Request()
         req.label = object_name
         req.k = instances
-        future = self.find_multi_object_grasp_client.call_async(req)
+        future = self.find_multi_object_client.call_async(req)
         rclpy.spin_until_future_complete(self, future)
         resp = future.result()
         if resp is None:
-            return "No response from /find_multi_object_grasp"
+            return "No response from /find_multi_object"
         if not resp.success:
-            return f"find_multi_object_grasp failed: {resp.error_message or 'unknown'}"
-        if not resp.grasp_poses:
+            return f"find_multi_object failed: {resp.message or 'unknown'}"
+        if not resp.x:
             return f"No instances of {object_name} found."
-        result_str = f"Found {len(resp.grasp_poses)} instance(s) of {object_name}:\n"
-        result_str += f"{object_name} grasp poses from left to right:\n"
-        for i, pose in enumerate(resp.grasp_poses):
-            result_str += f"  Instance {i+1}: x={pose.position.x:.3f}, y={pose.position.y:.3f}, z={pose.position.z:.3f}\n"
+        result_str = f"Found {len(resp.x)} instance(s) of {object_name}:\n"
+        result_str += f"{object_name} positions from left to right:\n"
+        for i in range(len(resp.x)):
+            result_str += f"  Instance {i+1}: x={resp.x[i]:.3f}, y={resp.y[i]:.3f}, z={resp.z[i]:.3f}, theta={resp.theta[i]:.3f}\n"
         return result_str.strip()
     
     def _find_boundary(self, object_name: str) -> str:
