@@ -606,6 +606,43 @@ class Ros2LLMAgentNode(Node):
         
         return self._move_linear_to_pose(pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w)
 
+    def _move_to_pose(self, x: float, y: float, z: float, theta: float) -> str:
+        self.get_logger().info(f"[_move_to_pose] Moving to pose ({x}, {y}, {z}, {theta})")
+
+        # Use rotation of (pi - theta) instead of theta
+        theta_rot = math.pi - theta
+        theta_rot_deg = math.degrees(theta_rot)
+        self.get_logger().info(
+            f"[_move_to_pose] Using rotation angle (pi - theta) = {theta_rot:.3f} rad ({theta_rot_deg:.2f} deg)"
+        )
+
+        # Get READY_POSE orientation as base
+        base_pose = REAL_READY_POSE if self.real_hardware else SIM_READY_POSE
+        base_quat = [base_pose.orientation.x, base_pose.orientation.y, base_pose.orientation.z, base_pose.orientation.w]
+        
+        # Create rotation quaternion for theta around z-axis
+        # q_z = [0, 0, sin(theta_rot/2), cos(theta_rot/2)] in [x, y, z, w] format
+        half_theta_rot = theta_rot / 2.0
+        z_rotation_quat = [0, 0, math.sin(half_theta_rot), math.cos(half_theta_rot)]
+        
+        # Helper function to multiply quaternions [x, y, z, w]
+        def quaternion_multiply(q1, q2):
+            x1, y1, z1, w1 = q1
+            x2, y2, z2, w2 = q2
+            return [
+                w1*x2 + x1*w2 + y1*z2 - z1*y2,  # x
+                w1*y2 - x1*z2 + y1*w2 + z1*x2,  # y
+                w1*z2 + x1*y2 - y1*x2 + z1*w2,  # z
+                w1*w2 - x1*x2 - y1*y2 - z1*z2,  # w
+            ]
+        
+        # Rotate base quaternion by theta around z-axis
+        rotated_quat = quaternion_multiply(base_quat, z_rotation_quat)
+        rot_x, rot_y, rot_z, rot_w = rotated_quat
+        
+        return self._move_linear_to_pose(x, y, z, rot_x, rot_y, rot_z, rot_w)
+
+
     # -----------------------
     # Tool wrappers (LangChain)
     # -----------------------
@@ -894,22 +931,18 @@ class Ros2LLMAgentNode(Node):
         tools.append(place_at_setpoint)
 
         @tool
-        def pickup_at(x: float, y: float, z: float) -> str:
+        def pickup_at(x: float, y: float, z: float, theta: float) -> str:
             """
             Move to a position above the target, then descend, close the gripper, and move up.
             """
             tool_name = "pickup_at"
-            self.get_logger().info(f"[pickup_at] Picking up object at ({x:.3f}, {y:.3f}, {z:.3f})")
+            self.get_logger().info(f"[pickup_at] Picking up object at ({x:.3f}, {y:.3f}, {z:.3f}, {theta:.3f})")
             with self._tools_called_lock:
                 self._tools_called.append(tool_name)
 
             try:
                 # Move to the target
-                if self.real_hardware:
-                    orient_down_pose = REAL_ORIENT_DOWN_POSE
-                else:
-                    orient_down_pose = SIM_ORIENT_DOWN_POSE
-                move_to_result = self._move_linear_to_pose(x, y, z, orient_down_pose.orientation.x, orient_down_pose.orientation.y, orient_down_pose.orientation.z, orient_down_pose.orientation.w)
+                move_to_result = self._move_to_pose(x, y, z, theta)
                 if "success=False" in move_to_result:
                     return f"Failed to move to target: {move_to_result}"
 
