@@ -673,27 +673,42 @@ class Ros2LLMAgentNode(Node):
 
         tools.append(get_current_pose)
 
+        # @tool
+        # def move_linear_to_pose(pos_x: float, pos_y: float, pos_z: float,
+        #                         rot_x: float, rot_y: float, rot_z: float, rot_w: float) -> str:
+        #     """
+        #     Move the end-effector linearly to an exact 6-DOF pose specified as position + quaternion.
+        #     Args:
+        #         pos_x, pos_y, pos_z: Target position in meters relative to base_link.
+        #         rot_x, rot_y, rot_z, rot_w: Target orientation as a unit quaternion.
+        #     Returns success/failure string.
+        #     Use this when you need full control over both position and orientation.
+        #     Prefer higher-level tools (move_to_object, pickup_at, place_at) when applicable.
+        #     """
+        #     tool_name = "move_linear_to_pose"
+        #     with self._tools_called_lock:
+        #         self._tools_called.append(tool_name)
+        #     try:
+        #         return self._move_linear_to_pose(pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w)
+        #     except Exception as e:
+        #         return f"ERROR in {tool_name}: {e}"
+
+        # tools.append(move_linear_to_pose)
+
         @tool
-        def move_linear_to_pose(pos_x: float, pos_y: float, pos_z: float,
-                                rot_x: float, rot_y: float, rot_z: float, rot_w: float) -> str:
+        def move_to_pose(x: float, y: float, z: float, theta: float) -> str:
             """
-            Move the end-effector linearly to an exact 6-DOF pose specified as position + quaternion.
-            Args:
-                pos_x, pos_y, pos_z: Target position in meters relative to base_link.
-                rot_x, rot_y, rot_z, rot_w: Target orientation as a unit quaternion.
-            Returns success/failure string.
-            Use this when you need full control over both position and orientation.
-            Prefer higher-level tools (move_to_object, pickup_at, place_at) when applicable.
+            Move the end-effector to the specified position (x, y, z, theta)
             """
-            tool_name = "move_linear_to_pose"
+            tool_name = "move_to_pose"
             with self._tools_called_lock:
                 self._tools_called.append(tool_name)
             try:
-                return self._move_linear_to_pose(pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w)
+                return self._move_to_pose(x, y, z, theta)
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
-
-        tools.append(move_linear_to_pose)
+            
+        tools.append(move_to_pose)
 
         @tool
         def move_to_home() -> str:
@@ -1135,7 +1150,7 @@ class Ros2LLMAgentNode(Node):
         if self.real_hardware:
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
-                "query sensors, perceive the environment, or command the robot: get_current_pose, move_linear_to_pose, set_gripper_position, move_relative,"
+                "query sensors, perceive the environment, or command the robot: get_current_pose, move_to_pose, set_gripper_position, move_relative,"
                 "move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, place_at_setpoint, find_object, find_multi_object, move_to_object, pickup_object, pickup_at, find_boundary. "
                 "use place_at_setpoint to place an object at a setpoint (home, ready, handover), use place_at to place an object at a specific position (x, y, z).\n"
                 "try to use complex tools (pickup_object, pickup_at, place_at, place_at_setpoint) instead of a sequence of simple tools.\n"
@@ -1156,7 +1171,7 @@ class Ros2LLMAgentNode(Node):
         else:
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
-                "query sensors, perceive the environment, or command the robot: get_current_pose, move_linear_to_pose, set_gripper_position, move_relative,"
+                "query sensors, perceive the environment, or command the robot: get_current_pose, move_to_pose, set_gripper_position, move_relative,"
                 "move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, place_at_setpoint, find_object, find_multi_object, move_to_object, pickup_object, pickup_at, find_boundary. "
                 "use place_at_setpoint to place an object at a setpoint (home, ready, handover), use place_at to place an object at a specific position (x, y, z).\n"
                 "try to use complex tools (pickup_object, pickup_at, place_at, place_at_setpoint) instead of a sequence of simple tools.\n"
