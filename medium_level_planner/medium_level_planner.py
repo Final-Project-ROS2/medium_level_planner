@@ -39,6 +39,8 @@ from custom_interfaces.action import GetCurrentPose
 from custom_interfaces.action import GetJointAngles
 from custom_interfaces.action import MoveitRelative
 from custom_interfaces.action import PlanComplexCartesianSteps
+from custom_interfaces.action import PlanPoseTheta
+from custom_interfaces.msg import PoseTheta
 from control_msgs.action import GripperCommand
 from geometry_msgs.msg import Pose
 
@@ -186,6 +188,7 @@ class Ros2LLMAgentNode(Node):
         self.pose_action_client = ActionClient(self, GetCurrentPose, "/get_current_pose")
         self.joint_action_client = ActionClient(self, GetJointAngles, "/get_joint_angles")
         self.relative_action_client = ActionClient(self, MoveitRelative, "/plan_cartesian_relative")
+        self.plan_pose_theta_action_client = ActionClient(self, PlanPoseTheta, "/plan_pose_theta")
 
         if self.real_hardware:
             self.gripper_client = self.create_client(SetBool, "/control_gripper")
@@ -573,75 +576,33 @@ class Ros2LLMAgentNode(Node):
             f"[_move_to_object] Parsed pose x={pos_x:.3f}, y={pos_y:.3f}, z={pos_z:.3f}, theta={theta:.3f} rad ({theta_deg:.2f} deg)"
         )
 
-        # Use rotation of (pi - theta) instead of theta
-        theta_rot = math.pi - theta
-        theta_rot_deg = math.degrees(theta_rot)
-        self.get_logger().info(
-            f"[_move_to_object] Using rotation angle (pi - theta) = {theta_rot:.3f} rad ({theta_rot_deg:.2f} deg)"
-        )
+        return self._move_to_pose_theta(pos_x, pos_y, pos_z, theta)
 
-        # Get READY_POSE orientation as base
-        base_pose = REAL_READY_POSE if self.real_hardware else SIM_READY_POSE
-        base_quat = [base_pose.orientation.x, base_pose.orientation.y, base_pose.orientation.z, base_pose.orientation.w]
-        
-        # Create rotation quaternion for theta around z-axis
-        # q_z = [0, 0, sin(theta_rot/2), cos(theta_rot/2)] in [x, y, z, w] format
-        half_theta_rot = theta_rot / 2.0
-        z_rotation_quat = [0, 0, math.sin(half_theta_rot), math.cos(half_theta_rot)]
-        
-        # Helper function to multiply quaternions [x, y, z, w]
-        def quaternion_multiply(q1, q2):
-            x1, y1, z1, w1 = q1
-            x2, y2, z2, w2 = q2
-            return [
-                w1*x2 + x1*w2 + y1*z2 - z1*y2,  # x
-                w1*y2 - x1*z2 + y1*w2 + z1*x2,  # y
-                w1*z2 + x1*y2 - y1*x2 + z1*w2,  # z
-                w1*w2 - x1*x2 - y1*y2 - z1*z2,  # w
-            ]
-        
-        # Rotate base quaternion by theta around z-axis
-        rotated_quat = quaternion_multiply(base_quat, z_rotation_quat)
-        rot_x, rot_y, rot_z, rot_w = rotated_quat
-        
-        return self._move_linear_to_pose(pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w)
+    def _move_to_pose_theta(self, x: float, y: float, z: float, theta: float) -> str:
+        self.get_logger().info(f"[_move_to_pose_theta] Moving to pose ({x}, {y}, {z}, {theta})")
 
-    def _move_to_pose(self, x: float, y: float, z: float, theta: float) -> str:
-        self.get_logger().info(f"[_move_to_pose] Moving to pose ({x}, {y}, {z}, {theta})")
-
-        # Use rotation of (pi - theta) instead of theta
-        theta_rot = math.pi - theta
-        theta_rot_deg = math.degrees(theta_rot)
-        self.get_logger().info(
-            f"[_move_to_pose] Using rotation angle (pi - theta) = {theta_rot:.3f} rad ({theta_rot_deg:.2f} deg)"
-        )
-
-        # Get READY_POSE orientation as base
-        base_pose = REAL_READY_POSE if self.real_hardware else SIM_READY_POSE
-        base_quat = [base_pose.orientation.x, base_pose.orientation.y, base_pose.orientation.z, base_pose.orientation.w]
-        
-        # Create rotation quaternion for theta around z-axis
-        # q_z = [0, 0, sin(theta_rot/2), cos(theta_rot/2)] in [x, y, z, w] format
-        half_theta_rot = theta_rot / 2.0
-        z_rotation_quat = [0, 0, math.sin(half_theta_rot), math.cos(half_theta_rot)]
-        
-        # Helper function to multiply quaternions [x, y, z, w]
-        def quaternion_multiply(q1, q2):
-            x1, y1, z1, w1 = q1
-            x2, y2, z2, w2 = q2
-            return [
-                w1*x2 + x1*w2 + y1*z2 - z1*y2,  # x
-                w1*y2 - x1*z2 + y1*w2 + z1*x2,  # y
-                w1*z2 + x1*y2 - y1*x2 + z1*w2,  # z
-                w1*w2 - x1*x2 - y1*y2 - z1*z2,  # w
-            ]
-        
-        # Rotate base quaternion by theta around z-axis
-        rotated_quat = quaternion_multiply(base_quat, z_rotation_quat)
-        rot_x, rot_y, rot_z, rot_w = rotated_quat
-        
-        return self._move_linear_to_pose(x, y, z, rot_x, rot_y, rot_z, rot_w)
-
+        goal = PlanPoseTheta.Goal()
+        pose = PoseTheta()
+        pose.x = x
+        pose.y = y
+        pose.z = z
+        pose.theta = theta
+        goal.pose = pose
+        if not self.plan_pose_theta_action_client.wait_for_server(timeout_sec=5.0):
+            return "/plan_pose_theta action server unavailable"
+        send_future = self.plan_pose_theta_action_client.send_goal_async(goal)
+        rclpy.spin_until_future_complete(self, send_future)
+        goal_handle = send_future.result()
+        if not goal_handle.accepted:
+            return "Plan pose theta action rejected"
+        result_future = goal_handle.get_result_async()
+        rclpy.spin_until_future_complete(self, result_future)
+        result = result_future.result().result
+        if result.success:
+            self.set_robot_state("is_home", False)
+            self.set_robot_state("is_ready", False)
+            self.set_robot_state("is_handover", False)
+        return f"plan_pose_theta result: success={result.success}"
 
     # -----------------------
     # Tool wrappers (LangChain)
@@ -704,7 +665,7 @@ class Ros2LLMAgentNode(Node):
             with self._tools_called_lock:
                 self._tools_called.append(tool_name)
             try:
-                return self._move_to_pose(x, y, z, theta)
+                return self._move_to_pose_theta(x, y, z, theta)
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
             
@@ -1048,7 +1009,7 @@ class Ros2LLMAgentNode(Node):
 
             try:
                 # Move to the target
-                move_to_result = self._move_to_pose(x, y, z, theta)
+                move_to_result = self._move_to_pose_theta(x, y, z, theta)
                 if "success=False" in move_to_result:
                     return f"Failed to move to target: {move_to_result}"
 
