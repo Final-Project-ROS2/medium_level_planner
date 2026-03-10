@@ -67,7 +67,7 @@ from langchain_ollama import ChatOllama
 # dotenv
 from dotenv import load_dotenv
 
-ENV_PATH = '/home/group11/final_project_ws/src/medium_level_planner/.env'
+ENV_PATH = '/home/kong/ros2_ws/src/medium_level_planner/.env'
 load_dotenv(dotenv_path=ENV_PATH)
 
 
@@ -174,7 +174,7 @@ class Ros2LLMAgentNode(Node):
                 self.get_logger().warn("No LLM API key found in environment variables GEMINI_API_KEY.")
             self.get_logger().info("Using Google Gemini API LLM.")
             self.llm = ChatGoogleGenerativeAI(
-                model="gemini-2.0-flash",
+                model="gemini-2.5-flash",
                 google_api_key=api_key,
                 temperature=0.0,
                 convert_system_message_to_human=True,
