@@ -174,9 +174,10 @@ class Ros2LLMAgentNode(Node):
                 self.get_logger().warn("No LLM API key found in environment variables GEMINI_API_KEY.")
             self.get_logger().info("Using Google Gemini API LLM.")
             self.llm = ChatGoogleGenerativeAI(
-                model="gemini-2.5-flash",
+                model="gemini-2.0-flash",
                 google_api_key=api_key,
                 temperature=0.0,
+                convert_system_message_to_human=True,
             )
 
         # Action clients (motion / robot state)
@@ -1006,6 +1007,7 @@ class Ros2LLMAgentNode(Node):
         def run_agent():
             try:
                 # invoke the agent (LangChain AgentExecutor). This may call our @tool fns.
+                self.get_logger().info(f"LLM tools bound: {[t.name for t in self.tools]}")
                 agent_resp = self.agent_executor.invoke({"input": prompt_text})
                 # LangChain usually returns a dict with "output" key for final text
                 final_text = agent_resp.get("output") if isinstance(agent_resp, dict) else str(agent_resp)
