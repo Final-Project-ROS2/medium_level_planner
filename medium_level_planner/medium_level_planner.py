@@ -67,7 +67,7 @@ from langchain_ollama import ChatOllama
 # dotenv
 from dotenv import load_dotenv
 
-ENV_PATH = '/home/kong/ros2_ws/src/medium_level_planner/.env'
+ENV_PATH = '/home/group11/final_project_ws/src/medium_level_planner/.env'
 load_dotenv(dotenv_path=ENV_PATH)
 
 
