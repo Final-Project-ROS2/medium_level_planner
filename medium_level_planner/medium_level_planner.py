@@ -1009,6 +1009,19 @@ class Ros2LLMAgentNode(Node):
                 self._tools_called.append(tool_name)
 
             try:
+                # Move to ready position
+                move_to_ready_result = self._move_to_ready()
+                if "success=False" in move_to_ready_result:
+                    return f"Failed to move to ready position: {move_to_ready_result}"
+                
+                # Open the gripper
+                if self.real_hardware:
+                    open_gripper_result = self._close_gripper(False)
+                else:
+                    open_gripper_result = self._set_gripper_position(0.0, 0.1)
+                if "success=False" in open_gripper_result:
+                    return f"Failed to open gripper: {open_gripper_result}"
+                
                 # Move to the target
                 move_to_result = self._move_to_pose_theta(x, y, z, theta)
                 if "success=False" in move_to_result:
