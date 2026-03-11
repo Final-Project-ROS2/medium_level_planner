@@ -113,7 +113,7 @@ SIM_ORIENT_DOWN_POSE.orientation.w = 0.00
 REAL_HOME_POSE = Pose()
 REAL_HOME_POSE.position.x = 0.132
 REAL_HOME_POSE.position.y = 0.144
-REAL_HOME_POSE.position.z = 0.5
+REAL_HOME_POSE.position.z = 0.3 # UR ROS2 Driver value: 0.5
 REAL_HOME_POSE.orientation.x = 1.0
 REAL_HOME_POSE.orientation.y = 0.0
 REAL_HOME_POSE.orientation.z = 0.0
@@ -122,7 +122,7 @@ REAL_HOME_POSE.orientation.w = -0.312
 REAL_READY_POSE = Pose()
 REAL_READY_POSE.position.x = 0.131
 REAL_READY_POSE.position.y = 0.2982
-REAL_READY_POSE.position.z = 0.303
+REAL_READY_POSE.position.z = 0.13933 # UR ROS2 Driver value: 0.303
 REAL_READY_POSE.orientation.x = 1.0
 REAL_READY_POSE.orientation.y = 0.0
 REAL_READY_POSE.orientation.z = 0.0
@@ -131,7 +131,7 @@ REAL_READY_POSE.orientation.w = 0.00
 REAL_HANDOVER_POSE = Pose()
 REAL_HANDOVER_POSE.position.x = 0.531
 REAL_HANDOVER_POSE.position.y = 0.1482
-REAL_HANDOVER_POSE.position.z = 0.303
+REAL_HANDOVER_POSE.position.z = 0.13933 # UR ROS2 Driver value: 0.303
 REAL_HANDOVER_POSE.orientation.x = 1.0
 REAL_HANDOVER_POSE.orientation.y = 0.0
 REAL_HANDOVER_POSE.orientation.z = 0.0
@@ -181,6 +181,7 @@ class Ros2LLMAgentNode(Node):
                 model="gemini-2.5-flash",
                 google_api_key=api_key,
                 temperature=0.0,
+                convert_system_message_to_human=True,
             )
 
         # Action clients (motion / robot state)
@@ -1200,6 +1201,7 @@ class Ros2LLMAgentNode(Node):
         def run_agent():
             try:
                 # invoke the agent (LangChain AgentExecutor). This may call our @tool fns.
+                self.get_logger().info(f"LLM tools bound: {[t.name for t in self.tools]}")
                 agent_resp = self.agent_executor.invoke({"input": prompt_text})
                 # LangChain usually returns a dict with "output" key for final text
                 final_text = agent_resp.get("output") if isinstance(agent_resp, dict) else str(agent_resp)
