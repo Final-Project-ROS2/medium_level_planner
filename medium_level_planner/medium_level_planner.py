@@ -39,6 +39,8 @@ from custom_interfaces.action import GetCurrentPose
 from custom_interfaces.action import GetJointAngles
 from custom_interfaces.action import MoveitRelative
 from custom_interfaces.action import PlanComplexCartesianSteps
+from custom_interfaces.action import PlanPoseTheta
+from custom_interfaces.msg import PoseTheta
 from control_msgs.action import GripperCommand
 from geometry_msgs.msg import Pose
 
@@ -52,6 +54,8 @@ from custom_interfaces.srv import (
     FindObjectReal,
     FindObjectGrasp,
     FindBoundary,
+    FindMultiObjectReal,
+    FindMultiObjectGrasp,
 )
 
 from custom_interfaces.srv import GetSetBool
@@ -185,6 +189,7 @@ class Ros2LLMAgentNode(Node):
         self.pose_action_client = ActionClient(self, GetCurrentPose, "/get_current_pose")
         self.joint_action_client = ActionClient(self, GetJointAngles, "/get_joint_angles")
         self.relative_action_client = ActionClient(self, MoveitRelative, "/plan_cartesian_relative")
+        self.plan_pose_theta_action_client = ActionClient(self, PlanPoseTheta, "/plan_pose_theta")
 
         if self.real_hardware:
             self.gripper_client = self.create_client(SetBool, "/control_gripper")
@@ -201,6 +206,8 @@ class Ros2LLMAgentNode(Node):
         self.find_object_client = self.create_client(FindObjectReal, "/find_object")
         self.find_object_grasp_client = self.create_client(FindObjectGrasp, "/find_object_grasp")
         self.find_boundary_client = self.create_client(FindBoundary, "/find_boundary")
+        self.find_multi_object_client = self.create_client(FindMultiObjectReal, "/find_multi_object")
+        self.find_multi_object_grasp_client = self.create_client(FindMultiObjectGrasp, "/find_multi_object_grasp")
 
         # PDDL state service clients
         self.is_home_client = self.create_client(GetSetBool, "/is_home")
@@ -422,6 +429,28 @@ class Ros2LLMAgentNode(Node):
         else:
             return f"{object_name} is at position x={x:.3f}, y={y:.3f}, z={z:.3f}, theta={theta:.3f}"
     
+    def _find_multi_object(self, object_name: str, instances: int) -> str:
+        self.get_logger().info(f"[_find_multi_object] Searching for all instances of {object_name}")
+        if not self.find_multi_object_client.wait_for_service(timeout_sec=5.0):
+            return "Service /find_multi_object unavailable"
+        req = FindMultiObjectReal.Request()
+        req.label = object_name
+        req.k = instances
+        future = self.find_multi_object_client.call_async(req)
+        rclpy.spin_until_future_complete(self, future)
+        resp = future.result()
+        if resp is None:
+            return "No response from /find_multi_object"
+        if not resp.success:
+            return f"find_multi_object failed: {resp.message or 'unknown'}"
+        if not resp.x:
+            return f"No instances of {object_name} found."
+        result_str = f"Found {len(resp.x)} instance(s) of {object_name}:\n"
+        result_str += f"{object_name} positions from left to right:\n"
+        for i in range(len(resp.x)):
+            result_str += f"  Instance {i+1}: x={resp.x[i]:.3f}, y={resp.y[i]:.3f}, z={resp.z[i]:.3f}, theta={resp.theta[i]:.3f}\n"
+        return result_str.strip()
+    
     def _find_boundary(self, object_name: str) -> str:
         self.get_logger().info(f"[_find_boundary] Searching for boundary of {object_name}")
         if not self.find_boundary_client.wait_for_service(timeout_sec=5.0):
@@ -548,38 +577,33 @@ class Ros2LLMAgentNode(Node):
             f"[_move_to_object] Parsed pose x={pos_x:.3f}, y={pos_y:.3f}, z={pos_z:.3f}, theta={theta:.3f} rad ({theta_deg:.2f} deg)"
         )
 
-        # Use rotation of (pi - theta) instead of theta
-        theta_rot = math.pi - theta
-        theta_rot_deg = math.degrees(theta_rot)
-        self.get_logger().info(
-            f"[_move_to_object] Using rotation angle (pi - theta) = {theta_rot:.3f} rad ({theta_rot_deg:.2f} deg)"
-        )
+        return self._move_to_pose_theta(pos_x, pos_y, pos_z, theta)
 
-        # Get READY_POSE orientation as base
-        base_pose = REAL_READY_POSE if self.real_hardware else SIM_READY_POSE
-        base_quat = [base_pose.orientation.x, base_pose.orientation.y, base_pose.orientation.z, base_pose.orientation.w]
-        
-        # Create rotation quaternion for theta around z-axis
-        # q_z = [0, 0, sin(theta_rot/2), cos(theta_rot/2)] in [x, y, z, w] format
-        half_theta_rot = theta_rot / 2.0
-        z_rotation_quat = [0, 0, math.sin(half_theta_rot), math.cos(half_theta_rot)]
-        
-        # Helper function to multiply quaternions [x, y, z, w]
-        def quaternion_multiply(q1, q2):
-            x1, y1, z1, w1 = q1
-            x2, y2, z2, w2 = q2
-            return [
-                w1*x2 + x1*w2 + y1*z2 - z1*y2,  # x
-                w1*y2 - x1*z2 + y1*w2 + z1*x2,  # y
-                w1*z2 + x1*y2 - y1*x2 + z1*w2,  # z
-                w1*w2 - x1*x2 - y1*y2 - z1*z2,  # w
-            ]
-        
-        # Rotate base quaternion by theta around z-axis
-        rotated_quat = quaternion_multiply(base_quat, z_rotation_quat)
-        rot_x, rot_y, rot_z, rot_w = rotated_quat
-        
-        return self._move_linear_to_pose(pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w)
+    def _move_to_pose_theta(self, x: float, y: float, z: float, theta: float) -> str:
+        self.get_logger().info(f"[_move_to_pose_theta] Moving to pose ({x}, {y}, {z}, {theta})")
+
+        goal = PlanPoseTheta.Goal()
+        pose = PoseTheta()
+        pose.x = x
+        pose.y = y
+        pose.z = z
+        pose.theta = theta
+        goal.pose = pose
+        if not self.plan_pose_theta_action_client.wait_for_server(timeout_sec=5.0):
+            return "/plan_pose_theta action server unavailable"
+        send_future = self.plan_pose_theta_action_client.send_goal_async(goal)
+        rclpy.spin_until_future_complete(self, send_future)
+        goal_handle = send_future.result()
+        if not goal_handle.accepted:
+            return "Plan pose theta action rejected"
+        result_future = goal_handle.get_result_async()
+        rclpy.spin_until_future_complete(self, result_future)
+        result = result_future.result().result
+        if result.success:
+            self.set_robot_state("is_home", False)
+            self.set_robot_state("is_ready", False)
+            self.set_robot_state("is_handover", False)
+        return f"plan_pose_theta result: success={result.success}"
 
     # -----------------------
     # Tool wrappers (LangChain)
@@ -596,7 +620,11 @@ class Ros2LLMAgentNode(Node):
 
         @tool
         def get_current_pose() -> str:
-            """Returns the current robot's end-effector pose relative to base_link."""
+            """
+            Get the current end-effector pose (position + orientation) in the base_link frame.
+            Returns a Pose string with fields: position.x/y/z and orientation.x/y/z/w.
+            Use this before any motion that depends on the current robot state.
+            """
             tool_name = "get_current_pose"
             with self._tools_called_lock:
                 self._tools_called.append(tool_name)
@@ -607,24 +635,49 @@ class Ros2LLMAgentNode(Node):
 
         tools.append(get_current_pose)
 
+        # @tool
+        # def move_linear_to_pose(pos_x: float, pos_y: float, pos_z: float,
+        #                         rot_x: float, rot_y: float, rot_z: float, rot_w: float) -> str:
+        #     """
+        #     Move the end-effector linearly to an exact 6-DOF pose specified as position + quaternion.
+        #     Args:
+        #         pos_x, pos_y, pos_z: Target position in meters relative to base_link.
+        #         rot_x, rot_y, rot_z, rot_w: Target orientation as a unit quaternion.
+        #     Returns success/failure string.
+        #     Use this when you need full control over both position and orientation.
+        #     Prefer higher-level tools (move_to_object, pickup_at, place_at) when applicable.
+        #     """
+        #     tool_name = "move_linear_to_pose"
+        #     with self._tools_called_lock:
+        #         self._tools_called.append(tool_name)
+        #     try:
+        #         return self._move_linear_to_pose(pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w)
+        #     except Exception as e:
+        #         return f"ERROR in {tool_name}: {e}"
+
+        # tools.append(move_linear_to_pose)
+
         @tool
-        def move_linear_to_pose(pos_x: float, pos_y: float, pos_z: float,
-                                rot_x: float, rot_y: float, rot_z: float, rot_w: float) -> str:
-            """Move robot to a target pose using quaternion orientation."""
-            tool_name = "move_linear_to_pose"
+        def move_to_pose(x: float, y: float, z: float, theta: float) -> str:
+            """
+            Move the end-effector to the specified position (x, y, z, theta)
+            """
+            tool_name = "move_to_pose"
             with self._tools_called_lock:
                 self._tools_called.append(tool_name)
             try:
-                return self._move_linear_to_pose(pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w)
+                return self._move_to_pose_theta(x, y, z, theta)
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
-
-        tools.append(move_linear_to_pose)
+            
+        tools.append(move_to_pose)
 
         @tool
         def move_to_home() -> str:
             """
-            Move robot to a predefined home pose.
+            Move the robot to its predefined home position (retracted, safe resting pose).
+            Returns success/failure string.
+            Use this to stow the robot between tasks or return to a known safe state.
             """
             tool_name = "move_to_home"
             with self._tools_called_lock:
@@ -638,7 +691,11 @@ class Ros2LLMAgentNode(Node):
 
         @tool
         def move_to_ready() -> str:
-            """Move robot to a predefined ready pose."""
+            """
+            Move the robot to its predefined ready position (arm extended, facing workspace).
+            Returns success/failure string.
+            Use this before picking or placing to establish a known starting pose.
+            """
             tool_name = "move_to_ready"
             with self._tools_called_lock:
                 self._tools_called.append(tool_name)
@@ -652,7 +709,9 @@ class Ros2LLMAgentNode(Node):
         @tool
         def move_to_handover() -> str:
             """
-            Move robot to a predefined ready pose.
+            Move the robot to its predefined handover position (suitable for handing an object to a person).
+            Returns success/failure string.
+            Use this as the final step when delivering an object to a human.
             """
             tool_name = "move_to_handover"
             with self._tools_called_lock:
@@ -668,7 +727,10 @@ class Ros2LLMAgentNode(Node):
         @tool
         def orient_gripper_down() -> str:
             """
-            Orient the gripper to face downwards.
+            Rotate the gripper so its approach axis points straight down (toward the table/floor).
+            Returns success/failure string.
+            Use this before picking objects from a flat surface when a top-down grasp is required.
+            Does NOT change the gripper's XYZ position.
             """
             tool_name = "orient_gripper_down"
             with self._tools_called_lock:
@@ -682,7 +744,14 @@ class Ros2LLMAgentNode(Node):
         if self.real_hardware:
             @tool
             def close_gripper(close: bool) -> str:
-                """Close or open the gripper (real hardware)."""
+                """
+                Open or close the real-hardware gripper.
+                Args:
+                    close: True to close (grasp), False to open (release).
+                Returns success/failure string.
+                Use True to grasp an object after positioning, False to release it.
+                Only available in real-hardware mode; use set_gripper_position in simulation.
+                """
                 tool_name = "close_gripper"
                 with self._tools_called_lock:
                     self._tools_called.append(tool_name)
@@ -694,7 +763,14 @@ class Ros2LLMAgentNode(Node):
         else:
             @tool
             def set_gripper_position(position: float, max_effort: float) -> str:
-                """Set the gripper to a specific position. 0.0=open, 0.8=closed."""
+                """
+                Set the simulation gripper to a specific jaw position.
+                Args:
+                    position: Jaw opening in [0.0, 0.8]. 0.0 = fully open, 0.8 = fully closed, ~0.2 = light grasp.
+                    max_effort: Maximum force in Nm (use 0.01 for most tasks).
+                Returns success/failure string.
+                Only available in simulation mode; use close_gripper on real hardware.
+                """
                 tool_name = "set_gripper_position"
                 with self._tools_called_lock:
                     self._tools_called.append(tool_name)
@@ -707,7 +783,15 @@ class Ros2LLMAgentNode(Node):
         @tool
         def move_relative(dx: float, dy: float, dz: float,
                         roll: float, pitch: float, yaw: float) -> str:
-            """Moves the robot end-effector relative to its current pose."""
+            """
+            Move the end-effector by a relative offset from its current pose.
+            Args:
+                dx, dy, dz: Translation offsets in meters in the base_link frame.
+                roll, pitch, yaw: Rotation offsets in radians applied to the current orientation.
+            Returns success/failure string.
+            Use for small adjustments (e.g., move up 0.15 m after grasping, nudge left 0.05 m).
+            Use 0.0 for axes you do not want to change.
+            """
             tool_name = "move_relative"
             with self._tools_called_lock:
                 self._tools_called.append(tool_name)
@@ -721,7 +805,13 @@ class Ros2LLMAgentNode(Node):
         @tool
         def find_object(object_name: str) -> str:
             """
-            Call /find_object which returns the position of the specified object.
+            Locate a single object by name and return its pose as (x, y, z, theta).
+            Args:
+                object_name: Exact label of the target object (e.g., 'cup', 'bottle').
+                             MUST NOT include spatial modifiers such as _leftmost, _rightmost, or _middle.
+            Returns a string: "<name> is at position x=..., y=..., z=..., theta=..." or an error message.
+            Use this when there is exactly one instance of the object or you only need any one instance.
+            Use find_multi_object instead when a spatial modifier is involved or multiple instances exist.
             """
             tool_name = "find_object"
             with self._tools_called_lock:
@@ -734,9 +824,36 @@ class Ros2LLMAgentNode(Node):
         tools.append(find_object)
 
         @tool
+        def find_multi_object(object_name: str, instances: int) -> str:
+            """
+            Locate multiple instances of an object and return all their poses sorted left-to-right.
+            Args:
+                object_name: Exact label of the target object (e.g., 'cup', 'bottle').
+                             MUST NOT include spatial modifiers; use this tool to resolve them instead.
+                instances: Expected number of instances to retrieve.
+            Returns a string listing each instance's (x, y, z, theta) ordered from left to right.
+            Use this when the task involves a spatial modifier (_leftmost → index 0, _rightmost → last index,
+            _middle → middle index) or when you need to enumerate all instances of an object class.
+            """
+            tool_name = "find_multi_object"
+            with self._tools_called_lock:
+                self._tools_called.append(tool_name)
+            try:
+                return self._find_multi_object(object_name, instances)
+            except Exception as e:
+                return f"ERROR in {tool_name}: {e}"
+
+        tools.append(find_multi_object)
+
+        @tool
         def find_boundary(object_name: str) -> str:
             """
-            Call /find_boundary which returns the boundary coordinates of the specified object.
+            Get the 2-D bounding box (x_min, x_max, y_min, y_max) of an object in the workspace plane.
+            Args:
+                object_name: Exact label of the target object (e.g., 'tray', 'box').
+            Returns a string: "Boundary of <name>: x=[x_min, x_max], y=[y_min, y_max]" or an error message.
+            Use this to determine a safe placement position adjacent to or inside a container/region.
+            Do NOT use this to pick an object; use find_object or find_multi_object for grasp poses.
             """
             tool_name = "find_boundary"
             with self._tools_called_lock:
@@ -751,7 +868,13 @@ class Ros2LLMAgentNode(Node):
         @tool
         def move_to_object(object_name: str) -> str:
             """
-            Look up an object's position with find_object then move there preserving current orientation.
+            Find an object by name and move the end-effector directly above/to its grasp pose.
+            Internally calls find_object then move_linear_to_pose with an orientation derived from the object's theta.
+            Args:
+                object_name: Exact label of the target object. MUST NOT include spatial modifiers.
+            Returns success/failure string.
+            Use this as a convenient single step to approach an object before grasping.
+            Use pickup_object instead if you also need to open the gripper and close it.
             """
             tool_name = "move_to_object"
             with self._tools_called_lock:
@@ -767,7 +890,14 @@ class Ros2LLMAgentNode(Node):
         @tool
         def place_at(x: float, y: float, z: float) -> str:
             """
-            Move to a position above the target, then opening the gripper.
+            Move to the specified position and release the currently held object there.
+            Sequence: move to (x, y, z) with gripper-down orientation → open gripper.
+            Args:
+                x, y, z: Target placement position in meters relative to base_link.
+            Returns success/failure string.
+            Use this when you know the exact numeric coordinates of the placement target.
+            Use place_at_setpoint instead for named locations (home, ready, handover).
+            Requires the robot to already be holding an object.
             """
             tool_name = "place_at"
             self.get_logger().info(f"[place_at] Placing object at ({x:.3f}, {y:.3f}, {z:.3f})")
@@ -806,7 +936,14 @@ class Ros2LLMAgentNode(Node):
         @tool
         def place_at_setpoint(setpoint: str) -> str:
             """
-            Move to a predefined setpoint (home, ready, handover) and place the object there.
+            Move to a named setpoint and release the currently held object there.
+            Sequence: move to named pose → open gripper.
+            Args:
+                setpoint: One of 'home', 'ready', or 'handover'.
+            Returns success/failure string.
+            Use this when delivering an object to a well-known location (e.g., 'handover' for human delivery).
+            Use place_at instead when the target is specified by numeric coordinates.
+            Requires the robot to already be holding an object.
             """
             tool_name = "place_at_setpoint"
             self.get_logger().info(f"[place_at_setpoint] Placing object at setpoint {setpoint}")
@@ -854,9 +991,77 @@ class Ros2LLMAgentNode(Node):
         tools.append(place_at_setpoint)
 
         @tool
+        def pickup_at(x: float, y: float, z: float, theta: float) -> str:
+            """
+            Pick up an object at a known pose without calling find_object internally.
+            Sequence: move to (x, y, z, theta) → close gripper → move up 0.15 m.
+            Args:
+                x, y, z: Target grasp position in meters relative to base_link.
+                theta: Object orientation angle in radians (from find_object / find_multi_object).
+            Returns success/failure string.
+            Use this when you already have the object's (x, y, z, theta) from a prior find_object
+            or find_multi_object call (e.g., to pick the leftmost of several objects).
+            Use pickup_object instead when only the object name is known and no modifier is involved.
+            """
+            tool_name = "pickup_at"
+            self.get_logger().info(f"[pickup_at] Picking up object at ({x:.3f}, {y:.3f}, {z:.3f}, {theta:.3f})")
+            with self._tools_called_lock:
+                self._tools_called.append(tool_name)
+
+            try:
+                # Move to ready position
+                move_to_ready_result = self._move_to_ready()
+                if "success=False" in move_to_ready_result:
+                    return f"Failed to move to ready position: {move_to_ready_result}"
+                
+                # Open the gripper
+                if self.real_hardware:
+                    open_gripper_result = self._close_gripper(False)
+                else:
+                    open_gripper_result = self._set_gripper_position(0.0, 0.1)
+                if "success=False" in open_gripper_result:
+                    return f"Failed to open gripper: {open_gripper_result}"
+                
+                # Move to the target
+                move_to_result = self._move_to_pose_theta(x, y, z, theta)
+                if "success=False" in move_to_result:
+                    return f"Failed to move to target: {move_to_result}"
+
+                time.sleep(TOOL_DELAY)
+
+                # Close gripper
+                if self.real_hardware:
+                    close_gripper_result = self._close_gripper(True)
+                else:
+                    close_gripper_result = self._set_gripper_position(0.8, 0.1)
+                if "success=False" in close_gripper_result:
+                    return f"Failed to close gripper: {close_gripper_result}"
+
+                time.sleep(TOOL_DELAY)
+
+                # Move up
+                move_up_result = self._move_relative(0.0, 0.0, 0.15, 0.0, 0.0, 0.0)
+                if "success=False" in move_up_result:
+                    return f"Failed to move up after pickup: {move_up_result}"
+
+                return f"Successfully picked up object at ({x:.3f}, {y:.3f}, {z:.3f})"
+
+            except Exception as e:
+                return f"ERROR in {tool_name}: {e}"
+
+        tools.append(pickup_at)
+
+        @tool
         def pickup_object(object_name: str) -> str:
             """
-            Move to ready, open gripper, go to the object, descend slightly, then close the gripper.
+            Fully autonomously pick up a named object from the workspace.
+            Sequence: move_to_ready → open gripper → move_to_object → close gripper → move up 0.15 m.
+            Args:
+                object_name: Exact label of the target object (e.g., 'cup', 'bottle').
+                             MUST NOT include spatial modifiers (_leftmost, _rightmost, _middle).
+                             For objects with modifiers, use find_multi_object to get the pose, then call pickup_at.
+            Returns success/failure string.
+            Prefer this tool over manually chaining move/gripper steps for straightforward pick tasks.
             """
             self.get_logger().info(f"[pickup_object] Picking up {object_name}")
             tool_name = "pickup_object"
@@ -920,12 +1125,13 @@ class Ros2LLMAgentNode(Node):
         if self.real_hardware:
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
-                "query sensors, perceive the environment, or command the robot: get_current_pose, move_linear_to_pose, set_gripper_position, move_relative,"
-                "move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, place_at_setpoint, find_object, move_to_object, pickup_object, find_boundary. "
+                "query sensors, perceive the environment, or command the robot: get_current_pose, move_to_pose, set_gripper_position, move_relative,"
+                "move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, place_at_setpoint, find_object, find_multi_object, move_to_object, pickup_object, pickup_at, find_boundary. "
                 "use place_at_setpoint to place an object at a setpoint (home, ready, handover), use place_at to place an object at a specific position (x, y, z).\n"
-                "try to use complex tools (pickup_object, place_at, place_at_setpoint) instead of a sequence of simple tools.\n"
+                "try to use complex tools (pickup_object, pickup_at, place_at, place_at_setpoint) instead of a sequence of simple tools.\n"
                 "try to use as few tools as possible to accomplish the task.\n"
-                "If the instruction matches with a tool, use that tool directly ONLY.\n"
+                "If an object comes with a modifier (e.g., _leftmost, _rightmost, _middle), use the find_multi_object tool to get all instances and then select the appropriate one.\n"
+                # "If the instruction matches with a tool, use that tool directly ONLY.\n"
                 f"Home is at {REAL_HOME_POSE}, ready is at {REAL_READY_POSE}, handover is at {REAL_HANDOVER_POSE}.\n"
                 "If you are instructed to move a certain direction (e.g., UP, DOWN, FORWARD, BACKWARD, LEFT, RIGHT), use the move_relative tool with small increments (e.g., 0.05m).\n"
                 "If you are instructed to move to position you don't know, make reasonable assumptions, DO NOT ask for clarification.\n"
@@ -940,12 +1146,13 @@ class Ros2LLMAgentNode(Node):
         else:
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
-                "query sensors, perceive the environment, or command the robot: get_current_pose, move_linear_to_pose, set_gripper_position, move_relative,"
-                "move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, place_at_setpoint, find_object, move_to_object, pickup_object, find_boundary. "
+                "query sensors, perceive the environment, or command the robot: get_current_pose, move_to_pose, set_gripper_position, move_relative,"
+                "move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, place_at_setpoint, find_object, find_multi_object, move_to_object, pickup_object, pickup_at, find_boundary. "
                 "use place_at_setpoint to place an object at a setpoint (home, ready, handover), use place_at to place an object at a specific position (x, y, z).\n"
-                "try to use complex tools (pickup_object, place_at, place_at_setpoint) instead of a sequence of simple tools.\n"
+                "try to use complex tools (pickup_object, pickup_at, place_at, place_at_setpoint) instead of a sequence of simple tools.\n"
                 "try to use as few tools as possible to accomplish the task.\n"
-                "If the instruction matches with a tool, use that tool directly ONLY.\n"
+                "If an object comes with a modifier (e.g., _leftmost, _rightmost, _middle), use the find_multi_object tool to get all instances and then select the appropriate one.\n"
+                # "If the instruction matches with a tool, use that tool directly ONLY.\n"
                 f"Home is at {SIM_HOME_POSE}, ready is at {SIM_READY_POSE}, handover is at {SIM_HANDOVER_POSE}.\n"
                 "If you are **EXPLICITLY** instructed to **OPEN** the gripper, set the gripper position to 0.0. "
                 "If you are **EXPLICITLY** instructed to **GRAB** an object, set the gripper position to 0.2. "
