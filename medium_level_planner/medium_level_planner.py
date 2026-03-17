@@ -111,27 +111,27 @@ SIM_ORIENT_DOWN_POSE.orientation.w = 0.00
 
 # Real Hardware predefined poses
 REAL_HOME_POSE = Pose()
-REAL_HOME_POSE.position.x = 0.132
-REAL_HOME_POSE.position.y = 0.144
-REAL_HOME_POSE.position.z = 0.3 # UR ROS2 Driver value: 0.5
+REAL_HOME_POSE.position.x = 0.125
+REAL_HOME_POSE.position.y = 0.492
+REAL_HOME_POSE.position.z = 0.333 # UR ROS2 Driver value: 0.5
 REAL_HOME_POSE.orientation.x = 1.0
 REAL_HOME_POSE.orientation.y = 0.0
 REAL_HOME_POSE.orientation.z = 0.0
-REAL_HOME_POSE.orientation.w = -0.312
+REAL_HOME_POSE.orientation.w = 0.00
 
 REAL_READY_POSE = Pose()
-REAL_READY_POSE.position.x = 0.131
-REAL_READY_POSE.position.y = 0.2982
-REAL_READY_POSE.position.z = 0.13933 # UR ROS2 Driver value: 0.303
+REAL_READY_POSE.position.x = 0.125
+REAL_READY_POSE.position.y = 0.492
+REAL_READY_POSE.position.z = 0.203 # UR ROS2 Driver value: 0.303
 REAL_READY_POSE.orientation.x = 1.0
 REAL_READY_POSE.orientation.y = 0.0
 REAL_READY_POSE.orientation.z = 0.0
 REAL_READY_POSE.orientation.w = 0.00
 
 REAL_HANDOVER_POSE = Pose()
-REAL_HANDOVER_POSE.position.x = 0.531
-REAL_HANDOVER_POSE.position.y = 0.1482
-REAL_HANDOVER_POSE.position.z = 0.13933 # UR ROS2 Driver value: 0.303
+REAL_HANDOVER_POSE.position.x = 0.336
+REAL_HANDOVER_POSE.position.y = 0.350
+REAL_HANDOVER_POSE.position.z = 0.203 # UR ROS2 Driver value: 0.303
 REAL_HANDOVER_POSE.orientation.x = 1.0
 REAL_HANDOVER_POSE.orientation.y = 0.0
 REAL_HANDOVER_POSE.orientation.z = 0.0
