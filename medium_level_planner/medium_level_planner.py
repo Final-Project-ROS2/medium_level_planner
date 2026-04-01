@@ -28,6 +28,8 @@ from typing import List, Dict, Any, Optional
 
 import rclpy
 from rclpy.node import Node
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.action import ActionServer, ActionClient, CancelResponse, GoalResponse
 
 # Services
@@ -184,36 +186,39 @@ class Ros2LLMAgentNode(Node):
                 convert_system_message_to_human=True,
             )
 
+        # Callback group
+        self.reentrant_callback_group = ReentrantCallbackGroup()
+
         # Action clients (motion / robot state)
-        self.move_action_client = ActionClient(self, PlanComplexCartesianSteps, "/plan_complex_cartesian_steps")
-        self.pose_action_client = ActionClient(self, GetCurrentPose, "/get_current_pose")
-        self.joint_action_client = ActionClient(self, GetJointAngles, "/get_joint_angles")
-        self.relative_action_client = ActionClient(self, MoveitRelative, "/plan_cartesian_relative")
-        self.plan_pose_theta_action_client = ActionClient(self, PlanPoseTheta, "/plan_pose_theta")
+        self.move_action_client = ActionClient(self, PlanComplexCartesianSteps, "/plan_complex_cartesian_steps", callback_group=self.reentrant_callback_group)
+        self.pose_action_client = ActionClient(self, GetCurrentPose, "/get_current_pose", callback_group=self.reentrant_callback_group)
+        self.joint_action_client = ActionClient(self, GetJointAngles, "/get_joint_angles", callback_group=self.reentrant_callback_group)
+        self.relative_action_client = ActionClient(self, MoveitRelative, "/plan_cartesian_relative", callback_group=self.reentrant_callback_group)
+        self.plan_pose_theta_action_client = ActionClient(self, PlanPoseTheta, "/plan_pose_theta", callback_group=self.reentrant_callback_group)
 
         if self.real_hardware:
-            self.gripper_client = self.create_client(SetBool, "/control_gripper")
+            self.gripper_client = self.create_client(SetBool, "/control_gripper", callback_group=self.reentrant_callback_group)
         else:
-            self.gripper_client = ActionClient(self, GripperCommand, "/gripper_wrapper")
+            self.gripper_client = ActionClient(self, GripperCommand, "/gripper_wrapper", callback_group=self.reentrant_callback_group)
 
         # Vision service clients (on-demand)
-        self.vision_detect_objects_client = self.create_client(DetectObjects, "/vision/detect_objects")
-        self.vision_classify_all_client = self.create_client(Trigger, "/vision/classify_all")
-        self.vision_classify_bb_client = self.create_client(ClassifyBBox, "/vision/classify_bb")
-        self.vision_detect_grasp_client = self.create_client(DetectGrasps, "/vision/detect_grasp")
-        self.vision_detect_grasp_bb_client = self.create_client(DetectGraspBBox, "/vision/detect_grasp_bb")
-        self.vision_understand_scene_client = self.create_client(UnderstandScene, "/vision/understand_scene")
-        self.find_object_client = self.create_client(FindObjectReal, "/find_object")
-        self.find_object_grasp_client = self.create_client(FindObjectGrasp, "/find_object_grasp")
-        self.find_boundary_client = self.create_client(FindBoundary, "/find_boundary")
-        self.find_multi_object_client = self.create_client(FindMultiObjectReal, "/find_multi_object")
-        self.find_multi_object_grasp_client = self.create_client(FindMultiObjectGrasp, "/find_multi_object_grasp")
+        self.vision_detect_objects_client = self.create_client(DetectObjects, "/vision/detect_objects", callback_group=self.reentrant_callback_group)
+        self.vision_classify_all_client = self.create_client(Trigger, "/vision/classify_all", callback_group=self.reentrant_callback_group)
+        self.vision_classify_bb_client = self.create_client(ClassifyBBox, "/vision/classify_bb", callback_group=self.reentrant_callback_group)
+        self.vision_detect_grasp_client = self.create_client(DetectGrasps, "/vision/detect_grasp", callback_group=self.reentrant_callback_group)
+        self.vision_detect_grasp_bb_client = self.create_client(DetectGraspBBox, "/vision/detect_grasp_bb", callback_group=self.reentrant_callback_group)
+        self.vision_understand_scene_client = self.create_client(UnderstandScene, "/vision/understand_scene", callback_group=self.reentrant_callback_group)
+        self.find_object_client = self.create_client(FindObjectReal, "/find_object", callback_group=self.reentrant_callback_group)
+        self.find_object_grasp_client = self.create_client(FindObjectGrasp, "/find_object_grasp", callback_group=self.reentrant_callback_group)
+        self.find_boundary_client = self.create_client(FindBoundary, "/find_boundary", callback_group=self.reentrant_callback_group)
+        self.find_multi_object_client = self.create_client(FindMultiObjectReal, "/find_multi_object", callback_group=self.reentrant_callback_group)
+        self.find_multi_object_grasp_client = self.create_client(FindMultiObjectGrasp, "/find_multi_object_grasp", callback_group=self.reentrant_callback_group)
 
         # PDDL state service clients
-        self.is_home_client = self.create_client(GetSetBool, "/is_home")
-        self.is_ready_client = self.create_client(GetSetBool, "/is_ready")
-        self.gripper_is_open_client = self.create_client(GetSetBool, "/gripper_is_open")
-        self.is_handover_client = self.create_client(GetSetBool, "/is_handover")
+        self.is_home_client = self.create_client(GetSetBool, "/is_home", callback_group=self.reentrant_callback_group)
+        self.is_ready_client = self.create_client(GetSetBool, "/is_ready", callback_group=self.reentrant_callback_group)
+        self.gripper_is_open_client = self.create_client(GetSetBool, "/gripper_is_open", callback_group=self.reentrant_callback_group)
+        self.is_handover_client = self.create_client(GetSetBool, "/is_handover", callback_group=self.reentrant_callback_group)
 
         # Shared state for tracking which tools were called during one prompt execution
         self._tools_called: List[str] = []
@@ -233,6 +238,7 @@ class Ros2LLMAgentNode(Node):
             execute_callback=self.execute_callback,
             goal_callback=self.goal_callback,
             cancel_callback=self.cancel_callback,
+            callback_group=self.reentrant_callback_group
         )
 
         self.get_logger().info("Ros2 LLM Agent Node ready (Prompt action server running).")
@@ -263,9 +269,10 @@ class Ros2LLMAgentNode(Node):
             request = GetSetBool.Request()
             request.set = True
             request.value = value
-            future = client.call_async(request)
-            rclpy.spin_until_future_complete(self, future)
-            response = future.result()
+            # future = client.call_async(request)
+            # rclpy.spin_until_future_complete(self, future)
+            # response = future.result()
+            response = client.call(request)
             if response.success:
                 # self.get_logger().info(f"Set {state_name} to {value}")
                 return True
@@ -400,9 +407,10 @@ class Ros2LLMAgentNode(Node):
             return "Gripper service /control_gripper unavailable"
         request = SetBool.Request()
         request.data = close
-        future = self.gripper_client.call_async(request)
-        rclpy.spin_until_future_complete(self, future)
-        response = future.result()
+        # future = self.gripper_client.call_async(request)
+        # rclpy.spin_until_future_complete(self, future)
+        # response = future.result()
+        response = self.gripper_client.call(request)
         if response.success:
             self.set_robot_state("gripper_is_open", not close)
             return f"Gripper successfully {'closed' if close else 'opened'}."
@@ -414,9 +422,10 @@ class Ros2LLMAgentNode(Node):
             return "Service /find_object unavailable"
         req = FindObjectReal.Request()
         req.label = object_name
-        future = self.find_object_client.call_async(req)
-        rclpy.spin_until_future_complete(self, future)
-        resp = future.result()
+        # future = self.find_object_client.call_async(req)
+        # rclpy.spin_until_future_complete(self, future)
+        # resp = future.result()
+        resp = self.find_object_client.call(req)
         if resp is None:
             return "No response from /find_object"
         if not resp.success:
@@ -436,9 +445,10 @@ class Ros2LLMAgentNode(Node):
         req = FindMultiObjectReal.Request()
         req.label = object_name
         req.k = instances
-        future = self.find_multi_object_client.call_async(req)
-        rclpy.spin_until_future_complete(self, future)
-        resp = future.result()
+        # future = self.find_multi_object_client.call_async(req)
+        # rclpy.spin_until_future_complete(self, future)
+        # resp = future.result()
+        resp = self.find_multi_object_client.call(req)
         if resp is None:
             return "No response from /find_multi_object"
         if not resp.success:
@@ -457,9 +467,10 @@ class Ros2LLMAgentNode(Node):
             return "Service /find_boundary unavailable"
         req = FindBoundary.Request()
         req.label = object_name
-        future = self.find_boundary_client.call_async(req)
-        rclpy.spin_until_future_complete(self, future)
-        resp = future.result()
+        # future = self.find_boundary_client.call_async(req)
+        # rclpy.spin_until_future_complete(self, future)
+        # resp = future.result()
+        resp = self.find_boundary_client.call(req)
         if resp is None:
             return "No response from /find_boundary"
         if not resp.success:
@@ -1239,6 +1250,9 @@ class Ros2LLMAgentNode(Node):
                 # ignore if cannot publish
                 pass
             time.sleep(0.5)  # cooperative yield for ROS2
+
+        agent_thread.join()
+        
         # final publish
         with self._tools_called_lock:
             tools_snapshot = list(self._tools_called)
@@ -1247,6 +1261,8 @@ class Ros2LLMAgentNode(Node):
             goal_handle.publish_feedback(feedback_msg)
         except Exception:
             pass
+
+        self.get_logger().info(f"Result Container: {result_container}")
 
         # Prepare and return result
         result_msg = Prompt.Result()
@@ -1261,11 +1277,16 @@ class Ros2LLMAgentNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = Ros2LLMAgentNode()
+
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
+
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         node.get_logger().info("Shutting down Ros2 LLM Agent Node...")
     finally:
+        executor.shutdown()
         node.destroy_node()
         rclpy.shutdown()
 
