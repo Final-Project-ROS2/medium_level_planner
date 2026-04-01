@@ -282,6 +282,65 @@ class Ros2LLMAgentNode(Node):
         except Exception as e:
             self.get_logger().error(f"ERROR in set_robot_state for {state_name}: {e}")
             return False
+
+    def _send_action_goal_with_events(
+        self,
+        client: ActionClient,
+        goal_msg,
+        server_name: str,
+        goal_timeout: float = 5.0,
+        result_timeout: float = 60.0,
+    ):
+        """Send an action goal without spin_until_future_complete to avoid blocking."""
+        try:
+            if not client.wait_for_server(timeout_sec=5.0):
+                return None, f"{server_name} action server unavailable"
+
+            goal_event = threading.Event()
+            result_event = threading.Event()
+            goal_handle_container: List[Optional[Any]] = [None]
+            result_container: List[Optional[Any]] = [None]
+
+            def goal_response_callback(future):
+                try:
+                    goal_handle_container[0] = future.result()
+                except Exception as e:
+                    self.get_logger().error(f"{server_name} goal response error: {e}")
+                finally:
+                    goal_event.set()
+
+            def result_callback(future):
+                try:
+                    result_container[0] = future.result()
+                except Exception as e:
+                    self.get_logger().error(f"{server_name} result callback error: {e}")
+                finally:
+                    result_event.set()
+
+            send_future = client.send_goal_async(goal_msg)
+            send_future.add_done_callback(goal_response_callback)
+
+            if not goal_event.wait(timeout=goal_timeout):
+                return None, f"Timeout waiting for {server_name} goal acceptance"
+
+            goal_handle = goal_handle_container[0]
+            if goal_handle is None or not goal_handle.accepted:
+                return None, f"{server_name} goal rejected"
+
+            result_future = goal_handle.get_result_async()
+            result_future.add_done_callback(result_callback)
+
+            if not result_event.wait(timeout=result_timeout):
+                return None, f"Timeout waiting for {server_name} result"
+
+            wrapped_result = result_container[0]
+            if wrapped_result is None:
+                return None, f"{server_name} result future returned no data"
+
+            return wrapped_result.result, None
+        except Exception as e:
+            self.get_logger().error(f"Exception when sending goal to {server_name}: {e}")
+            return None, f"Exception when sending goal to {server_name}: {e}"
     
     # -----------------------
     # Reusable Tools
@@ -294,16 +353,11 @@ class Ros2LLMAgentNode(Node):
         ready_pose = SIM_READY_POSE if not self.real_hardware else REAL_READY_POSE
         goal = PlanComplexCartesianSteps.Goal()
         goal.target_pose = ready_pose
-        if not self.move_action_client.wait_for_server(timeout_sec=5.0):
-            return "Move action server unavailable"
-        send_future = self.move_action_client.send_goal_async(goal)
-        rclpy.spin_until_future_complete(self, send_future)
-        goal_handle = send_future.result()
-        if not goal_handle.accepted:
-            return "Move action rejected"
-        result_future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self, result_future)
-        result = result_future.result().result
+        result, error = self._send_action_goal_with_events(
+            self.move_action_client, goal, "/plan_complex_cartesian_steps"
+        )
+        if error:
+            return error
         if result.success:
             self.set_robot_state("is_home", False)
             self.set_robot_state("is_ready", True)
@@ -317,16 +371,11 @@ class Ros2LLMAgentNode(Node):
         goal = PlanComplexCartesianSteps.Goal()
         goal.target_pose = home_pose
 
-        if not self.move_action_client.wait_for_server(timeout_sec=5.0):
-            return "Move action server unavailable"
-        send_future = self.move_action_client.send_goal_async(goal)
-        rclpy.spin_until_future_complete(self, send_future)
-        goal_handle = send_future.result()
-        if not goal_handle.accepted:
-            return "Move action rejected"
-        result_future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self, result_future)
-        result = result_future.result().result
+        result, error = self._send_action_goal_with_events(
+            self.move_action_client, goal, "/plan_complex_cartesian_steps"
+        )
+        if error:
+            return error
         if result.success:
             self.set_robot_state("is_home", True)
             self.set_robot_state("is_ready", False)
@@ -340,16 +389,11 @@ class Ros2LLMAgentNode(Node):
         goal = PlanComplexCartesianSteps.Goal()
         goal.target_pose = handover_pose
 
-        if not self.move_action_client.wait_for_server(timeout_sec=5.0):
-            return "Move action server unavailable"
-        send_future = self.move_action_client.send_goal_async(goal)
-        rclpy.spin_until_future_complete(self, send_future)
-        goal_handle = send_future.result()
-        if not goal_handle.accepted:
-            return "Move action rejected"
-        result_future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self, result_future)
-        result = result_future.result().result
+        result, error = self._send_action_goal_with_events(
+            self.move_action_client, goal, "/plan_complex_cartesian_steps"
+        )
+        if error:
+            return error
         if result.success:
             self.set_robot_state("is_home", False)
             self.set_robot_state("is_ready", False)
@@ -366,16 +410,11 @@ class Ros2LLMAgentNode(Node):
         down_orientation.orientation.w = 0.00
         goal.target_pose = down_orientation
 
-        if not self.move_action_client.wait_for_server(timeout_sec=5.0):
-            return "Move action server unavailable"
-        send_future = self.move_action_client.send_goal_async(goal)
-        rclpy.spin_until_future_complete(self, send_future)
-        goal_handle = send_future.result()
-        if not goal_handle.accepted:
-            return "Move action rejected"
-        result_future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self, result_future)
-        result = result_future.result().result
+        result, error = self._send_action_goal_with_events(
+            self.move_action_client, goal, "/plan_complex_cartesian_steps"
+        )
+        if error:
+            return error
         return f"orient_gripper_down result: success={result.success}"
 
     def _set_gripper_position(self, position: float, max_effort: float) -> str:
@@ -384,16 +423,11 @@ class Ros2LLMAgentNode(Node):
             goal = GripperCommand.Goal()
             goal.command.position = position
             goal.command.max_effort = max_effort
-            if not self.gripper_client.wait_for_server(timeout_sec=5.0):
-                return "Gripper action server unavailable"
-            send_future = self.gripper_client.send_goal_async(goal)
-            rclpy.spin_until_future_complete(self, send_future)
-            goal_handle = send_future.result()
-            if not goal_handle.accepted:
-                return "Gripper action rejected"
-            result_future = goal_handle.get_result_async()
-            rclpy.spin_until_future_complete(self, result_future)
-            result = result_future.result().result
+            result, error = self._send_action_goal_with_events(
+                self.gripper_client, goal, "/gripper_wrapper"
+            )
+            if error:
+                return error
             if result.reached_goal:
                 self.set_robot_state("gripper_is_open", position == 0.0)
             return f"set_gripper_position result: success={getattr(result, 'reached_goal', False)}"
@@ -484,19 +518,13 @@ class Ros2LLMAgentNode(Node):
 
     def _fetch_current_pose(self) -> Optional[Pose]:
         self.get_logger().info("[_fetch_current_pose] Requesting current pose")
-        if not self.pose_action_client.wait_for_server(timeout_sec=5.0):
-            self.get_logger().error("[_fetch_current_pose] /get_current_pose unavailable")
-            return None
         goal = GetCurrentPose.Goal()
-        send_future = self.pose_action_client.send_goal_async(goal)
-        rclpy.spin_until_future_complete(self, send_future)
-        goal_handle = send_future.result()
-        if not goal_handle.accepted:
-            self.get_logger().error("[_fetch_current_pose] Goal rejected")
+        result, error = self._send_action_goal_with_events(
+            self.pose_action_client, goal, "/get_current_pose", result_timeout=10.0
+        )
+        if error:
+            self.get_logger().error(f"[_fetch_current_pose] {error}")
             return None
-        result_future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self, result_future)
-        result = result_future.result().result
         if result.success:
             return result.pose
         self.get_logger().error("[_fetch_current_pose] Failed to fetch pose")
@@ -524,16 +552,11 @@ class Ros2LLMAgentNode(Node):
         pose.orientation.z = rot_z
         pose.orientation.w = rot_w
         goal.target_pose = pose
-        if not self.move_action_client.wait_for_server(timeout_sec=5.0):
-            return "Move action server unavailable"
-        send_future = self.move_action_client.send_goal_async(goal)
-        rclpy.spin_until_future_complete(self, send_future)
-        goal_handle = send_future.result()
-        if not goal_handle.accepted:
-            return "Move action rejected"
-        result_future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self, result_future)
-        result = result_future.result().result
+        result, error = self._send_action_goal_with_events(
+            self.move_action_client, goal, "/plan_complex_cartesian_steps"
+        )
+        if error:
+            return error
         if result.success:
             self.set_robot_state("is_home", False)
             self.set_robot_state("is_ready", False)
@@ -544,8 +567,6 @@ class Ros2LLMAgentNode(Node):
         self.get_logger().info(
             f"[_move_relative] dx={dx}, dy={dy}, dz={dz}, roll={roll}, pitch={pitch}, yaw={yaw}"
         )
-        if not self.relative_action_client.wait_for_server(timeout_sec=5.0):
-            return "Action server /plan_cartesian_relative unavailable."
         goal_msg = MoveitRelative.Goal()
         goal_msg.distance_x = dx
         goal_msg.distance_y = dy
@@ -553,14 +574,11 @@ class Ros2LLMAgentNode(Node):
         goal_msg.roll = roll
         goal_msg.pitch = pitch
         goal_msg.yaw = yaw
-        send_goal_future = self.relative_action_client.send_goal_async(goal_msg)
-        rclpy.spin_until_future_complete(self, send_goal_future)
-        goal_handle = send_goal_future.result()
-        if not goal_handle.accepted:
-            return "Relative motion goal rejected by action server."
-        result_future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self, result_future)
-        result = result_future.result().result
+        result, error = self._send_action_goal_with_events(
+            self.relative_action_client, goal_msg, "/plan_cartesian_relative"
+        )
+        if error:
+            return error
         if result.success:
             self.set_robot_state("is_home", False)
             self.set_robot_state("is_ready", False)
@@ -600,16 +618,11 @@ class Ros2LLMAgentNode(Node):
         pose.z = z
         pose.theta = theta
         goal.pose = pose
-        if not self.plan_pose_theta_action_client.wait_for_server(timeout_sec=5.0):
-            return "/plan_pose_theta action server unavailable"
-        send_future = self.plan_pose_theta_action_client.send_goal_async(goal)
-        rclpy.spin_until_future_complete(self, send_future)
-        goal_handle = send_future.result()
-        if not goal_handle.accepted:
-            return "Plan pose theta action rejected"
-        result_future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self, result_future)
-        result = result_future.result().result
+        result, error = self._send_action_goal_with_events(
+            self.plan_pose_theta_action_client, goal, "/plan_pose_theta"
+        )
+        if error:
+            return error
         if result.success:
             self.set_robot_state("is_home", False)
             self.set_robot_state("is_ready", False)
@@ -1250,8 +1263,6 @@ class Ros2LLMAgentNode(Node):
                 # ignore if cannot publish
                 pass
             time.sleep(0.5)  # cooperative yield for ROS2
-
-        agent_thread.join()
         
         # final publish
         with self._tools_called_lock:
