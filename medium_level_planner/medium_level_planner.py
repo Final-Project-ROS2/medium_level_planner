@@ -463,7 +463,7 @@ class Ros2LLMAgentNode(Node):
         if resp is None:
             return "No response from /find_object"
         if not resp.success:
-            return f"find_object failed: {resp.error_message or 'unknown'}"
+            return f"find_object failed: {resp.message or 'unknown'}"
         x, y, z, theta = resp.x, resp.y, resp.z, resp.theta
         if x is None or y is None or z is None:
             return f"{object_name} not found in the scene."
@@ -508,7 +508,7 @@ class Ros2LLMAgentNode(Node):
         if resp is None:
             return "No response from /find_boundary"
         if not resp.success:
-            return f"find_boundary failed: {resp.error_message or 'unknown'}"
+            return f"find_boundary failed: {resp.message or 'unknown'}"
         x_min, x_max, y_min, y_max = resp.x1, resp.x2, resp.y1, resp.y2
         if None in [x_min, x_max, y_min, y_max]:
             return f"Boundary for {object_name} not found."
