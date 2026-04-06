@@ -145,6 +145,16 @@ REAL_ORIENT_DOWN_POSE.orientation.y = 0.0
 REAL_ORIENT_DOWN_POSE.orientation.z = 0.0
 REAL_ORIENT_DOWN_POSE.orientation.w = 0.00
 
+# Preset Pickup and Drop position
+PICKUP_POSE_X = 0.3
+PICKUP_POSE_Y = 0.0
+PICKUP_POSE_Z = 0.1
+PICKUP_POSE_THETA = 0.0
+
+DROP_POSE_X = 0.3
+DROP_POSE_Y = -0.3
+DROP_POSE_Z = 0.1
+
 # Composite tools delay time
 TOOL_DELAY = 5.0
 
@@ -544,9 +554,9 @@ class Ros2LLMAgentNode(Node):
         )
         goal = PlanComplexCartesianSteps.Goal()
         pose = Pose()
-        pose.position.x = pos_x
-        pose.position.y = pos_y
-        pose.position.z = pos_z
+        pose.position.x = DROP_POSE_X
+        pose.position.y = DROP_POSE_Y
+        pose.position.z = DROP_POSE_Z
         pose.orientation.x = rot_x
         pose.orientation.y = rot_y
         pose.orientation.z = rot_z
@@ -602,6 +612,7 @@ class Ros2LLMAgentNode(Node):
 
         # Log parsed values and theta in degrees
         theta_deg = math.degrees(theta)
+        pos_x, pos_y, pos_z, theta = PICKUP_POSE_X, PICKUP_POSE_Y, PICKUP_POSE_Z, PICKUP_POSE_THETA
         self.get_logger().info(
             f"[_move_to_object] Parsed pose x={pos_x:.3f}, y={pos_y:.3f}, z={pos_z:.3f}, theta={theta:.3f} rad ({theta_deg:.2f} deg)"
         )
