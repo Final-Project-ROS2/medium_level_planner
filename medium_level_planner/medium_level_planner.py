@@ -763,7 +763,7 @@ class Ros2LLMAgentNode(Node):
                 return self._orient_gripper_down()
             except Exception as e:
                 return f"ERROR in {tool_name}: {e}"
-        tools.append(orient_gripper_down)
+        # tools.append(orient_gripper_down)
 
         if self.real_hardware:
             @tool
@@ -1150,11 +1150,12 @@ class Ros2LLMAgentNode(Node):
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
                 "query sensors, perceive the environment, or command the robot: get_current_pose, move_to_pose, set_gripper_position, move_relative,"
-                "move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, place_at_setpoint, find_object, find_multi_object, move_to_object, pickup_object, pickup_at, find_boundary. "
+                "move_to_home, move_to_ready, move_to_handover, close_gripper, place_at, place_at_setpoint, find_object, find_multi_object, move_to_object, pickup_object, pickup_at, find_boundary. "
                 "use place_at_setpoint to place an object at a setpoint (home, ready, handover), use place_at to place an object at a specific position (x, y, z).\n"
                 "try to use complex tools (pickup_object, pickup_at, place_at, place_at_setpoint) instead of a sequence of simple tools.\n"
                 "try to use as few tools as possible to accomplish the task.\n"
                 "If an object comes with a modifier (e.g., _leftmost, _rightmost, _middle), use the find_multi_object tool to get all instances and then select the appropriate one.\n"
+                "If you are instruct to place an object at a position relative to another object, LEAVE at least 0.1 m of clearance.\n"
                 # "If the instruction matches with a tool, use that tool directly ONLY.\n"
                 f"Home is at {REAL_HOME_POSE}, ready is at {REAL_READY_POSE}, handover is at {REAL_HANDOVER_POSE}.\n"
                 "If you are instructed to move a certain direction (e.g., UP, DOWN, FORWARD, BACKWARD, LEFT, RIGHT), use the move_relative tool with small increments (e.g., 0.05m).\n"
@@ -1162,16 +1163,17 @@ class Ros2LLMAgentNode(Node):
                 "When you choose to use a tool, call it with appropriate arguments (if any). "
                 "Return a final, concise, actionable response after using tools.\n"
                 "Here is environment guidance:\n"
+                "- If you are instruct to place an object at a position relative to another object, LEAVE at least 0.1 m of clearance.\n"
                 "- You can get your current gripper cartesian position by using the get_current_pose tool.\n"
                 "- The direction up is along positive Z axis, down is along negative Z axis.\n"
                 "- The direction forward is along negative Y axis, backward is along positive Y axis.\n"
-                "- The direction left is along positive X axis, right is along negative X axis.\n"
+                "- The direction right is along positive X axis, left is along negative X axis.\n"
             )
         else:
             system_message = (
                 "You are a ROS2-capable assistant. You can call the following tools (services/actions) to "
                 "query sensors, perceive the environment, or command the robot: get_current_pose, move_to_pose, set_gripper_position, move_relative,"
-                "move_to_home, move_to_ready, move_to_handover, orient_gripper_down, close_gripper, place_at, place_at_setpoint, find_object, find_multi_object, move_to_object, pickup_object, pickup_at, find_boundary. "
+                "move_to_home, move_to_ready, move_to_handover, close_gripper, place_at, place_at_setpoint, find_object, find_multi_object, move_to_object, pickup_object, pickup_at, find_boundary. "
                 "use place_at_setpoint to place an object at a setpoint (home, ready, handover), use place_at to place an object at a specific position (x, y, z).\n"
                 "try to use complex tools (pickup_object, pickup_at, place_at, place_at_setpoint) instead of a sequence of simple tools.\n"
                 "try to use as few tools as possible to accomplish the task.\n"
