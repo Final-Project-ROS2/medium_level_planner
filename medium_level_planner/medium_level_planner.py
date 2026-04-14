@@ -31,6 +31,7 @@ from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.action import ActionServer, ActionClient, CancelResponse, GoalResponse
+from std_msgs.msg import Bool
 
 # Services
 from std_srvs.srv import SetBool, Trigger
@@ -224,6 +225,17 @@ class Ros2LLMAgentNode(Node):
         self._tools_called: List[str] = []
         self._tools_called_lock = threading.Lock()
 
+        # Emergency + prompt execution cancellation state
+        self._emergency_active = False
+        self._execution_state_lock = threading.Lock()
+        self._active_execution_cancel_event: Optional[threading.Event] = None
+        self.emergency_sub = self.create_subscription(
+            Bool,
+            "/emergency",
+            self._emergency_callback,
+            10,
+        )
+
         # Initialize LangChain tools that wrap ROS clients
         self.tools = self._initialize_tools()
 
@@ -242,6 +254,45 @@ class Ros2LLMAgentNode(Node):
         )
 
         self.get_logger().info("Ros2 LLM Agent Node ready (Prompt action server running).")
+
+    def _emergency_callback(self, msg: Bool) -> None:
+        is_emergency = bool(msg.data)
+        self._emergency_active = is_emergency
+
+        if is_emergency:
+            with self._execution_state_lock:
+                active_cancel_event = self._active_execution_cancel_event
+            if active_cancel_event is not None:
+                active_cancel_event.set()
+            self.get_logger().warn("Emergency asserted: canceling active medium-level execution")
+        else:
+            self.get_logger().info("Emergency cleared for medium-level planner")
+
+    def _execution_cancel_requested(self) -> bool:
+        with self._execution_state_lock:
+            active_cancel_event = self._active_execution_cancel_event
+        return active_cancel_event.is_set() if active_cancel_event is not None else False
+
+    def _should_abort_execution(self) -> bool:
+        return self._emergency_active or self._execution_cancel_requested()
+
+    def _wait_event_with_abort(self, event: threading.Event, timeout: float, step_s: float = 0.05) -> bool:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if event.is_set():
+                return True
+            if self._should_abort_execution():
+                return False
+            time.sleep(step_s)
+        return event.is_set()
+
+    def _sleep_with_abort(self, duration_s: float, step_s: float = 0.05) -> bool:
+        deadline = time.time() + duration_s
+        while time.time() < deadline:
+            if self._should_abort_execution():
+                return False
+            time.sleep(step_s)
+        return True
 
     def set_robot_state(self, state_name: str, value: bool) -> bool:
         """
@@ -293,6 +344,9 @@ class Ros2LLMAgentNode(Node):
     ):
         """Send an action goal without spin_until_future_complete to avoid blocking."""
         try:
+            if self._should_abort_execution():
+                return None, f"{server_name} aborted due to emergency/cancel"
+
             if not client.wait_for_server(timeout_sec=5.0):
                 return None, f"{server_name} action server unavailable"
 
@@ -320,17 +374,28 @@ class Ros2LLMAgentNode(Node):
             send_future = client.send_goal_async(goal_msg)
             send_future.add_done_callback(goal_response_callback)
 
-            if not goal_event.wait(timeout=goal_timeout):
+            if not self._wait_event_with_abort(goal_event, goal_timeout):
                 return None, f"Timeout waiting for {server_name} goal acceptance"
 
             goal_handle = goal_handle_container[0]
             if goal_handle is None or not goal_handle.accepted:
                 return None, f"{server_name} goal rejected"
 
+            if self._should_abort_execution():
+                try:
+                    goal_handle.cancel_goal_async()
+                except Exception:
+                    pass
+                return None, f"{server_name} aborted due to emergency/cancel"
+
             result_future = goal_handle.get_result_async()
             result_future.add_done_callback(result_callback)
 
-            if not result_event.wait(timeout=result_timeout):
+            if not self._wait_event_with_abort(result_event, result_timeout):
+                try:
+                    goal_handle.cancel_goal_async()
+                except Exception:
+                    pass
                 return None, f"Timeout waiting for {server_name} result"
 
             wrapped_result = result_container[0]
@@ -349,6 +414,8 @@ class Ros2LLMAgentNode(Node):
     # In your Ros2LLMAgentNode class, add these private helper methods:
 
     def _move_to_ready(self) -> str:
+        if self._should_abort_execution():
+            return "Execution aborted due to emergency/cancel"
         self.get_logger().info("[_move_to_ready] Moving to ready pose")
         ready_pose = SIM_READY_POSE if not self.real_hardware else REAL_READY_POSE
         goal = PlanComplexCartesianSteps.Goal()
@@ -365,6 +432,8 @@ class Ros2LLMAgentNode(Node):
         return f"move_to_ready result: success={result.success}"
 
     def _move_to_home(self) -> str:
+        if self._should_abort_execution():
+            return "Execution aborted due to emergency/cancel"
         self.get_logger().info("[_move_to_home] Moving to home pose")
         home_pose = SIM_HOME_POSE if not self.real_hardware else REAL_HOME_POSE
 
@@ -383,6 +452,8 @@ class Ros2LLMAgentNode(Node):
         return f"move_to_home result: success={result.success}"
     
     def _move_to_handover(self) -> str:
+        if self._should_abort_execution():
+            return "Execution aborted due to emergency/cancel"
         self.get_logger().info("[_move_to_handover] Moving to handover pose")
         handover_pose = SIM_HANDOVER_POSE if not self.real_hardware else REAL_HANDOVER_POSE
 
@@ -401,6 +472,8 @@ class Ros2LLMAgentNode(Node):
         return f"move_to_handover result: success={result.success}"
     
     def _orient_gripper_down(self) -> str:
+        if self._should_abort_execution():
+            return "Execution aborted due to emergency/cancel"
         self.get_logger().info("[_orient_gripper_down] Orienting gripper downward")
         goal = PlanComplexCartesianSteps.Goal()
         down_orientation = Pose()
@@ -418,6 +491,8 @@ class Ros2LLMAgentNode(Node):
         return f"orient_gripper_down result: success={result.success}"
 
     def _set_gripper_position(self, position: float, max_effort: float) -> str:
+        if self._should_abort_execution():
+            return "Execution aborted due to emergency/cancel"
         self.get_logger().info(f"[_set_gripper_position] position={position}, max_effort={max_effort}")
         if isinstance(self.gripper_client, ActionClient):
             goal = GripperCommand.Goal()
@@ -434,6 +509,8 @@ class Ros2LLMAgentNode(Node):
         return "set_gripper_position not available for real hardware"
 
     def _close_gripper(self, close: bool) -> str:
+        if self._should_abort_execution():
+            return "Execution aborted due to emergency/cancel"
         self.get_logger().info(f"[_close_gripper] close={close}")
         if isinstance(self.gripper_client, ActionClient):
             return "close_gripper is not available in simulation mode."
@@ -538,6 +615,8 @@ class Ros2LLMAgentNode(Node):
         return f"pose: {pose}"
 
     def _move_linear_to_pose(self, pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w) -> str:
+        if self._should_abort_execution():
+            return "Execution aborted due to emergency/cancel"
         self.get_logger().info(
             f"[_move_linear_to_pose] target=({pos_x}, {pos_y}, {pos_z}), "
             f"orientation=({rot_x}, {rot_y}, {rot_z}, {rot_w})"
@@ -564,6 +643,8 @@ class Ros2LLMAgentNode(Node):
         return f"move_to_pose result: success={result.success}"
 
     def _move_relative(self, dx, dy, dz, roll, pitch, yaw) -> str:
+        if self._should_abort_execution():
+            return "Execution aborted due to emergency/cancel"
         self.get_logger().info(
             f"[_move_relative] dx={dx}, dy={dy}, dz={dz}, roll={roll}, pitch={pitch}, yaw={yaw}"
         )
@@ -589,6 +670,8 @@ class Ros2LLMAgentNode(Node):
         return "Cartesian path planning or execution failed."
 
     def _move_to_object(self, object_name: str) -> str:
+        if self._should_abort_execution():
+            return "Execution aborted due to emergency/cancel"
         self.get_logger().info(f"[_move_to_object] Moving to object '{object_name}'")
         find_result = self._find_object(object_name)
         if "not found" in find_result.lower() or "failed" in find_result.lower():
@@ -609,6 +692,8 @@ class Ros2LLMAgentNode(Node):
         return self._move_to_pose_theta(pos_x, pos_y, pos_z, theta)
 
     def _move_to_pose_theta(self, x: float, y: float, z: float, theta: float) -> str:
+        if self._should_abort_execution():
+            return "Execution aborted due to emergency/cancel"
         self.get_logger().info(f"[_move_to_pose_theta] Moving to pose ({x}, {y}, {z}, {theta})")
 
         goal = PlanPoseTheta.Goal()
@@ -938,7 +1023,8 @@ class Ros2LLMAgentNode(Node):
                 if "success=False" in move_to_result:
                     return f"Failed to move to target: {move_to_result}"
 
-                time.sleep(TOOL_DELAY)
+                if not self._sleep_with_abort(TOOL_DELAY):
+                    return "Execution aborted due to emergency/cancel"
 
                 # Open gripper
                 if self.real_hardware:
@@ -948,7 +1034,8 @@ class Ros2LLMAgentNode(Node):
                 if "success=False" in open_gripper_result:
                     return f"Failed to open gripper: {open_gripper_result}"
 
-                time.sleep(TOOL_DELAY)
+                if not self._sleep_with_abort(TOOL_DELAY):
+                    return "Execution aborted due to emergency/cancel"
 
                 return f"Successfully placed at ({x:.3f}, {y:.3f}, {z:.3f})"
 
@@ -995,7 +1082,8 @@ class Ros2LLMAgentNode(Node):
                 if "success=False" in move_to_result:
                     return f"Failed to move to target: {move_to_result}"
 
-                time.sleep(TOOL_DELAY)
+                if not self._sleep_with_abort(TOOL_DELAY):
+                    return "Execution aborted due to emergency/cancel"
 
                 # Open gripper
                 if self.real_hardware:
@@ -1005,7 +1093,8 @@ class Ros2LLMAgentNode(Node):
                 if "success=False" in open_gripper_result:
                     return f"Failed to open gripper: {open_gripper_result}"
 
-                time.sleep(TOOL_DELAY)
+                if not self._sleep_with_abort(TOOL_DELAY):
+                    return "Execution aborted due to emergency/cancel"
 
                 return f"Successfully placed at {setpoint}"
 
@@ -1051,7 +1140,8 @@ class Ros2LLMAgentNode(Node):
                 if "success=False" in move_to_result:
                     return f"Failed to move to target: {move_to_result}"
 
-                time.sleep(TOOL_DELAY)
+                if not self._sleep_with_abort(TOOL_DELAY):
+                    return "Execution aborted due to emergency/cancel"
 
                 # Close gripper
                 if self.real_hardware:
@@ -1061,7 +1151,8 @@ class Ros2LLMAgentNode(Node):
                 if "success=False" in close_gripper_result:
                     return f"Failed to close gripper: {close_gripper_result}"
 
-                time.sleep(TOOL_DELAY)
+                if not self._sleep_with_abort(TOOL_DELAY):
+                    return "Execution aborted due to emergency/cancel"
 
                 # Move up
                 move_up_result = self._move_relative(0.0, 0.0, 0.15, 0.0, 0.0, 0.0)
@@ -1098,7 +1189,8 @@ class Ros2LLMAgentNode(Node):
                 move_to_ready_result = self._move_to_ready()
                 sequence.append(move_to_ready_result)
 
-                time.sleep(TOOL_DELAY)
+                if not self._sleep_with_abort(TOOL_DELAY):
+                    return "Execution aborted due to emergency/cancel"
 
                 if self.real_hardware:
                     open_gripper_result = self._close_gripper(False)
@@ -1106,14 +1198,16 @@ class Ros2LLMAgentNode(Node):
                     open_gripper_result = self._set_gripper_position(0.0, 0.01)
                 sequence.append(open_gripper_result)
 
-                time.sleep(TOOL_DELAY)
+                if not self._sleep_with_abort(TOOL_DELAY):
+                    return "Execution aborted due to emergency/cancel"
 
                 move_result = self._move_to_object(object_name)
                 sequence.append(move_result)
                 if "success=False" in move_result or "aborted" in move_result:
                     return "; ".join(sequence)
 
-                time.sleep(TOOL_DELAY)
+                if not self._sleep_with_abort(TOOL_DELAY):
+                    return "Execution aborted due to emergency/cancel"
 
                 # move_down_result = self._move_relative(0.0, 0.0, -0.01, 0.0, 0.0, 0.0)
                 # sequence.append(move_down_result)
@@ -1126,7 +1220,8 @@ class Ros2LLMAgentNode(Node):
                     close_gripper_result = self._set_gripper_position(0.8, 0.01)
                 sequence.append(close_gripper_result)
 
-                time.sleep(TOOL_DELAY)
+                if not self._sleep_with_abort(TOOL_DELAY):
+                    return "Execution aborted due to emergency/cancel"
 
                 move_up_result = self._move_relative(0.0, 0.0, 0.15, 0.0, 0.0, 0.0)
                 sequence.append(move_up_result)
@@ -1214,6 +1309,9 @@ class Ros2LLMAgentNode(Node):
     def goal_callback(self, goal_request) -> GoalResponse:
         # Accept all goals (customize if needed)
         self.get_logger().info(f"[action] Received goal: {getattr(goal_request, 'prompt', '')}")
+        if self._emergency_active:
+            self.get_logger().warn("[action] Rejecting goal because emergency is active")
+            return GoalResponse.REJECT
         # Reset tools_called for this execution
         with self._tools_called_lock:
             self._tools_called = []
@@ -1221,6 +1319,10 @@ class Ros2LLMAgentNode(Node):
 
     def cancel_callback(self, goal_handle) -> CancelResponse:
         self.get_logger().info("[action] Cancel request received.")
+        with self._execution_state_lock:
+            active_cancel_event = self._active_execution_cancel_event
+        if active_cancel_event is not None:
+            active_cancel_event.set()
         return CancelResponse.ACCEPT
 
     async def execute_callback(self, goal_handle):
@@ -1232,13 +1334,27 @@ class Ros2LLMAgentNode(Node):
         prompt_text = goal_handle.request.prompt
         self.get_logger().info(f"[action] Executing prompt: {prompt_text}")
 
+        if self._emergency_active:
+            result_msg = Prompt.Result()
+            result_msg.success = False
+            result_msg.final_response = "Execution aborted: emergency active"
+            goal_handle.abort()
+            return result_msg
+
         feedback_msg = Prompt.Feedback()
 
         # Run agent in a different thread to avoid blocking ROS spin
         result_container: Dict[str, Any] = {"success": False, "final_response": "Internal error"}
+        cancel_event = threading.Event()
+        with self._execution_state_lock:
+            self._active_execution_cancel_event = cancel_event
 
         def run_agent():
             try:
+                if cancel_event.is_set() or self._emergency_active:
+                    result_container["success"] = False
+                    result_container["final_response"] = "Execution aborted due to emergency/cancel"
+                    return
                 # invoke the agent (LangChain AgentExecutor). This may call our @tool fns.
                 self.get_logger().info(f"LLM tools bound: {[t.name for t in self.tools]}")
                 agent_resp = self.agent_executor.invoke({"input": prompt_text})
@@ -1255,6 +1371,9 @@ class Ros2LLMAgentNode(Node):
 
         # While the agent runs, publish feedback every 0.5s with the current tools_called
         while agent_thread.is_alive():
+            if goal_handle.is_cancel_requested or self._should_abort_execution():
+                cancel_event.set()
+                break
             with self._tools_called_lock:
                 # copy to avoid race
                 tools_snapshot = list(self._tools_called)
@@ -1265,6 +1384,9 @@ class Ros2LLMAgentNode(Node):
                 # ignore if cannot publish
                 pass
             time.sleep(0.5)  # cooperative yield for ROS2
+
+        if agent_thread.is_alive():
+            agent_thread.join(timeout=0.2)
         
         # final publish
         with self._tools_called_lock:
@@ -1281,6 +1403,21 @@ class Ros2LLMAgentNode(Node):
         result_msg = Prompt.Result()
         result_msg.success = bool(result_container.get("success", False))
         result_msg.final_response = str(result_container.get("final_response", ""))
+
+        with self._execution_state_lock:
+            if self._active_execution_cancel_event is cancel_event:
+                self._active_execution_cancel_event = None
+
+        if self._emergency_active or cancel_event.is_set():
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+            else:
+                goal_handle.abort()
+            if not result_msg.final_response:
+                result_msg.final_response = "Execution aborted due to emergency/cancel"
+            result_msg.success = False
+            self.get_logger().warn("[action] Goal aborted due to emergency/cancel")
+            return result_msg
 
         goal_handle.succeed()
         self.get_logger().info(f"[action] Goal finished. success={result_msg.success}")
